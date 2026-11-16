@@ -11,3 +11,5 @@ apps/pet-device/build/
 apps/pet-device/managed_components/
 apps/pet-device/sdkconfig
 apps/pet-device/sdkconfig.old
+.vercel
+.env*

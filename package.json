@@ -9,5 +9,8 @@
     "build:h5": "pnpm --filter parent-h5 build",
     "start:h5": "pnpm --filter parent-h5 start",
     "lint:h5": "pnpm --filter parent-h5 lint"
+  },
+  "devDependencies": {
+    "vercel": "^65.16.0"
   }
 }
