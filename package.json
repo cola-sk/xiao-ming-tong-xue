@@ -1,0 +1,13 @@
+{
+  "name": "ai-chat-pet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "基于 ESP32-S3 的智能语音宠物（AI Chat Pet）全栈系统 (Next.js H5 + ESP-IDF Monorepo)",
+  "scripts": {
+    "build": "pnpm --filter parent-h5 build",
+    "dev:h5": "pnpm --filter parent-h5 dev",
+    "build:h5": "pnpm --filter parent-h5 build",
+    "start:h5": "pnpm --filter parent-h5 start",
+    "lint:h5": "pnpm --filter parent-h5 lint"
+  }
+}

@@ -1,0 +1,62 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { isDoubaoConfigured, synthesizeDoubaoTts } from '../../../../server/doubaoVoice';
+
+/**
+ * 火山引擎豆包语音合成 (TTS) API (`/api/v1/tts`)
+ * - 支持传入复刻好的爸妈 `speaker_id` (`S_xxxxxx`, cluster=`volcano_icl`) 将任意文字合成为爸爸妈妈的真实模拟声音 MP3
+ * - 支持传入豆包内置音色 (`BV700_V2_streaming` 等, cluster=`volcano_tts`) 合成「小铭同学」宠物语音 MP3
+ */
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  const text: string = (body.text || '').trim();
+  const voiceType: string = (body.voiceType || '').trim();
+  const isClonedVoice: boolean = Boolean(body.isClonedVoice);
+  const speedRatio: number = Number(body.speedRatio) || 1.0;
+  // 只有定时语音任务才传 persist: true 保存到数据库；其他试听或对话均不落库
+  const persist: boolean = Boolean(body.persist);
+
+  if (!text) {
+    return NextResponse.json({ error: '请输入要合成语音的文字内容' }, { status: 400 });
+  }
+
+  if (!isDoubaoConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          '未检测到豆包语音配置，请在 .env.local 中填入 DOUBAO_SPEECH_API_KEY',
+        configured: false,
+      },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const result = await synthesizeDoubaoTts({
+      text,
+      voiceType: voiceType || undefined,
+      isClonedVoice,
+      speedRatio,
+      persist,
+    });
+
+    return NextResponse.json({
+      status: 'ok',
+      provider: 'volcengine-doubao-tts',
+      audioUrl: result.audioUrl,
+      audioDataUrl: result.audioDataUrl,
+      audioMd5: result.audioMd5,
+      fromCache: result.fromCache,
+      durationMs: result.durationMs,
+      voiceType: result.voiceType,
+      cluster: result.cluster,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error: err instanceof Error ? err.message : '豆包 TTS 语音合成失败',
+        configured: true,
+      },
+      { status: 502 }
+    );
+  }
+}

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>小铭同学 - ESP32-S3-Touch-AMOLED-2.16 (480×480) 语音宠物模拟器</title>
+  <style>
+    * { box-sizing: border-box; user-select: none; }
+    body {
+      margin: 0;
+      background: #F5F4F0;
+      color: #242620;
+      font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 32px;
+      padding: 32px 16px;
+    }
+    .hardware-shell {
+      position: relative;
+      padding: 18px;
+      background: #222521;
+      border-radius: 36px;
+      box-shadow: 0 22px 48px rgba(36, 38, 32, 0.25), inset 0 2px 5px rgba(255,255,255,0.14);
+    }
+    /* 侧面物理按键：KEY (GPIO18) / BOOT (GPIO0) 与 PWR (AXP2101) */
+    .side-btn {
+      position: absolute;
+      right: -12px;
+      width: 12px;
+      background: #B96043;
+      border: 0;
+      border-radius: 0 8px 8px 0;
+      cursor: pointer;
+      color: white;
+      font-size: 9px;
+      writing-mode: vertical-rl;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.22);
+    }
+    .side-btn.boot { top: 88px; height: 74px; }
+    .side-btn.pwr { top: 188px; height: 52px; background: #55574F; }
+    .side-btn:active { transform: translateX(-2px); }
+
+    /* 2.16寸 480x480 高清正方形 AMOLED 屏幕 (按 340x340 正方形 1:1 视口预览 480x480) */
+    .screen {
+      position: relative;
+      width: 340px;
+      height: 340px;
+      background: #FFFDF8;
+      border-radius: 22px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 20px 18px;
+    }
+    .status-bar {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      align-items: center;
+      font-size: 11px;
+      color: #77786F;
+      font-weight: 700;
+    }
+    .badge-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #EF4444;
+      margin-left: 4px;
+    }
+    .page-area {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      cursor: pointer;
+      position: relative;
+    }
+    .pet-avatar {
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      background: #F8F1E3;
+      border: 3px solid #EDE1C7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 56px;
+      transition: transform 0.2s ease;
+    }
+    .pet-avatar.active {
+      transform: scale(1.08);
+      border-color: #B96043;
+      background: #F7EBE5;
+    }
+    .state-title {
+      margin-top: 14px;
+      font-size: 16px;
+      font-weight: 800;
+      color: #242620;
+    }
+    .state-sub {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #77786F;
+      line-height: 1.4;
+      padding: 0 14px;
+    }
+    .footer-tabs {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+    }
+    .tab-pill {
+      border: 1px solid #E9E7E0;
+      background: #F5F4F0;
+      color: #77786F;
+      border-radius: 999px;
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab-pill.active {
+      background: #3E493F;
+      color: #FFFFFF;
+      border-color: #3E493F;
+    }
+    /* 全局定时闹钟弹窗 */
+    .alarm-modal {
+      position: absolute;
+      inset: 0;
+      background: rgba(185, 96, 67, 0.96);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      text-align: center;
+      z-index: 30;
+      cursor: pointer;
+    }
+    .alarm-modal[hidden] { display: none !important; }
+    .panel {
+      max-width: 360px;
+      background: white;
+      border: 1px solid #E9E7E0;
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 5px 16px rgba(57, 53, 43, 0.04);
+    }
+    .panel h2 { margin: 0 0 8px; font-size: 16px; }
+    .panel p { margin: 6px 0; font-size: 12px; color: #55574F; line-height: 1.5; }
+    .panel button {
+      margin-top: 8px;
+      margin-right: 6px;
+      padding: 7px 12px;
+      border-radius: 9px;
+      border: 1px solid #E4E1D9;
+      background: #FFFDF9;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .panel button.primary {
+      background: #B96043;
+      color: white;
+      border-color: #B96043;
+    }
+  </style>
+</head>
+<body>
+  <div class="hardware-shell">
+    <button class="side-btn boot" id="bootBtn" title="按住给爸妈发微聊语音">KEY微聊</button>
+    <button class="side-btn pwr" id="pwrBtn" title="短按切换页面">PWR切换</button>
+
+    <main class="screen" data-resolution="480x480">
+      <div class="status-bar">
+        <span>Wi-Fi · 小铭同学</span>
+        <span>·</span>
+        <span id="clockText">20:30 · 88%</span>
+      </div>
+
+      <!-- 主触控区 -->
+      <div class="page-area" id="touchZone">
+        <div class="pet-avatar" id="avatarBox">🐶</div>
+        <div class="state-title" id="stateTitle">小铭同学 · 待机中</div>
+        <div class="state-sub" id="stateSub">按住 480×480 触摸屏跟小铭同学说话，松手发送</div>
+      </div>
+
+      <!-- 底部左右滑动/页签指示 -->
+      <div class="footer-tabs">
+        <button class="tab-pill active" id="tabAi">1. 小铭同学</button>
+        <button class="tab-pill" id="tabWechat">2. 爸妈微聊 <span class="badge-dot" id="unreadDot"></span></button>
+      </div>
+
+      <!-- 全局弹窗：RTC 定时语音播报 -->
+      <div class="alarm-modal" id="alarmModal" hidden>
+        <div style="font-size: 42px;">⏰</div>
+        <div style="font-size: 17px; font-weight: 800; margin-top: 8px;" id="alarmTitle">20:30 刷牙睡觉提醒</div>
+        <div style="font-size: 12px; margin-top: 6px; opacity: 0.92;" id="alarmText">“宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！”</div>
+        <div style="margin-top: 18px; padding: 7px 16px; border-radius: 999px; background: white; color: #B96043; font-size: 12px; font-weight: 800;">
+          点击触摸屏确认收到 (alarm_ack)
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <aside class="panel">
+    <h2>「小铭同学」ESP32-S3-Touch-AMOLED-2.16 模拟器</h2>
+    <p>分辨率 <strong>480 × 480</strong> 高清 AMOLED (`CO5300` + `CST9220`) · 双麦硬件回声消除 `ES7210 (AEC)` + 喇叭 `ES8311` + 硬件 RTC `PCF85063`。</p>
+    <p>1. <strong>按住屏幕中央</strong>：在主页跟「小铭同学」AI 对话；在副页点击收听妈妈语音。</p>
+    <p>2. <strong>按住右侧橙色 KEY 键 (GPIO18/BOOT)</strong>：无论在哪个页面，盲操直接给爸妈录微信语音。</p>
+    <p>3. <strong>点击下方按钮测试云端/RTC 下发</strong>：</p>
+    <div>
+      <button class="primary" id="simRtcBtn">触发 20:30 RTC 定时播报</button>
+      <button id="simParentMsgBtn">模拟妈妈发来新语音</button>
+    </div>
+  </aside>
+
+  <script>
+    let page = 'ai'; // 'ai' | 'wechat'
+    let unread = true;
+    const avatarBox = document.getElementById('avatarBox');
+    const stateTitle = document.getElementById('stateTitle');
+    const stateSub = document.getElementById('stateSub');
+    const tabAi = document.getElementById('tabAi');
+    const tabWechat = document.getElementById('tabWechat');
+    const unreadDot = document.getElementById('unreadDot');
+    const touchZone = document.getElementById('touchZone');
+    const bootBtn = document.getElementById('bootBtn');
+    const pwrBtn = document.getElementById('pwrBtn');
+    const alarmModal = document.getElementById('alarmModal');
+
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'zh-CN';
+        u.pitch = 1.25;
+        window.speechSynthesis.speak(u);
+      }
+    }
+
+    function renderPage() {
+      unreadDot.style.display = unread ? 'inline-block' : 'none';
+      if (page === 'ai') {
+        tabAi.classList.add('active');
+        tabWechat.classList.remove('active');
+        avatarBox.textContent = '🐶';
+        stateTitle.textContent = '小铭同学 · 待机眨眼';
+        stateSub.textContent = '按住屏幕跟小铭同学说话 · 按住侧面键给爸妈发语音';
+      } else {
+        tabWechat.classList.add('active');
+        tabAi.classList.remove('active');
+        avatarBox.textContent = unread ? '👩🔴' : '👩💬';
+        stateTitle.textContent = unread ? '妈妈发来 1 条未读语音' : '爸妈微聊 (已读)';
+        stateSub.textContent = '点击屏幕播放妈妈语音 · 按住发语音给妈妈';
+      }
+    }
+
+    tabAi.onclick = () => { page = 'ai'; renderPage(); };
+    tabWechat.onclick = () => { page = 'wechat'; renderPage(); };
+    pwrBtn.onclick = () => { page = page === 'ai' ? 'wechat' : 'ai'; renderPage(); };
+
+    touchZone.onmousedown = () => {
+      avatarBox.classList.add('active');
+      if (page === 'ai') {
+        avatarBox.textContent = '🐶👂';
+        stateTitle.textContent = '正在倾听 (16kHz Opus + AEC)…';
+        stateSub.textContent = '松开手指立即发送至云端 AI';
+      } else {
+        unread = false;
+        unreadDot.style.display = 'none';
+        avatarBox.textContent = '🔊👩';
+        stateTitle.textContent = '正在播放妈妈的语音…';
+        stateSub.textContent = '“宝贝，放学回家先喝口温水哦！”';
+        speak('宝贝，放学回家先喝口温水哦！');
+      }
+    };
+
+    touchZone.onmouseup = () => {
+      avatarBox.classList.remove('active');
+      if (page === 'ai') {
+        avatarBox.textContent = '🐶💡';
+        stateTitle.textContent = '小铭同学正在开心回答…';
+        const reply = '哈哈！我是小铭同学，今天也要开开心心，有什么好玩的事快告诉我吧！';
+        stateSub.textContent = reply;
+        speak(reply);
+      } else {
+        renderPage();
+      }
+    };
+
+    bootBtn.onmousedown = () => {
+      avatarBox.classList.add('active');
+      avatarBox.textContent = '🎙️❤️';
+      stateTitle.textContent = '微聊专属对讲录音中…';
+      stateSub.textContent = '松开侧面按键立即发送给妈妈';
+    };
+
+    bootBtn.onmouseup = () => {
+      avatarBox.classList.remove('active');
+      avatarBox.textContent = '✅👩';
+      stateTitle.textContent = '已发送给妈妈！';
+      stateSub.textContent = '家长端 H5 将立即收到语音气泡';
+      setTimeout(renderPage, 1500);
+    };
+
+    document.getElementById('simRtcBtn').onclick = () => {
+      alarmModal.hidden = false;
+      speak('宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！');
+    };
+
+    alarmModal.onclick = () => {
+      alarmModal.hidden = true;
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      stateTitle.textContent = '已确认闹钟 (alarm_ack)';
+      stateSub.textContent = '已通过 MQTT 上报家长端：孩子已确认';
+    };
+
+    document.getElementById('simParentMsgBtn').onclick = () => {
+      unread = true;
+      page = 'wechat';
+      renderPage();
+      speak('叮咚，妈妈发来一条新语音');
+    };
+  </script>
+</body>
+</html>

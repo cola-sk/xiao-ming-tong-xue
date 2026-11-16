@@ -1,0 +1,8 @@
+{
+  "name": "@ai-chat-pet/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "智能语音宠物系统 (AI Chat Pet) - 跨端 (ESP32-S3固件、家长端H5、服务端) 共享协议契约与数据模型",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

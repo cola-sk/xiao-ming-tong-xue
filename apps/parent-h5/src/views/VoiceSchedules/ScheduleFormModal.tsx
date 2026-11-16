@@ -1,0 +1,440 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { Popup, Stepper, Toast } from 'antd-mobile';
+import { VoiceSchedule } from '../../services/types';
+import { useAppStore } from '../../stores/useAppStore';
+import { IconMic, IconVolume, IconSparkle } from '../../components/Icons';
+import {
+  playAudioOrFallback,
+  requestDoubaoTtsAudio,
+  speakBySourceType,
+} from '../../utils/voiceSynth';
+
+interface Props {
+  visible: boolean;
+  onClose: () => void;
+  initialSchedule?: VoiceSchedule | null;
+  onOpenCloneStudio?: () => void;
+}
+
+const WEEKDAY_OPTIONS = [
+  { label: '周一', value: 1 },
+  { label: '周二', value: 2 },
+  { label: '周三', value: 3 },
+  { label: '周四', value: 4 },
+  { label: '周五', value: 5 },
+  { label: '周六', value: 6 },
+  { label: '周日', value: 7 },
+];
+
+export const ScheduleFormModal: React.FC<Props> = ({
+  visible,
+  onClose,
+  initialSchedule,
+  onOpenCloneStudio,
+}) => {
+  const { addSchedule, updateSchedule, petConfig, voiceClones } = useAppStore();
+
+  const [title, setTitle] = useState('晚上刷牙睡觉提醒');
+  const [timeStr, setTimeStr] = useState('20:30');
+  const [repeatDays, setRepeatDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 7]);
+  const [sourceType, setSourceType] = useState<'tts' | 'parent_clone' | 'record'>('parent_clone');
+  const [selectedCloneId, setSelectedCloneId] = useState<string>('');
+  const [textContent, setTextContent] = useState('宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！');
+  const [repeatPlayCount, setRepeatPlayCount] = useState(2);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (initialSchedule) {
+      setTitle(initialSchedule.title);
+      setTimeStr(initialSchedule.timeStr);
+      setRepeatDays(initialSchedule.repeatDays);
+      setSourceType(initialSchedule.sourceType);
+      setSelectedCloneId(initialSchedule.clonedVoiceId || voiceClones[0]?.id || '');
+      setTextContent(initialSchedule.textContent);
+      setRepeatPlayCount(initialSchedule.repeatPlayCount);
+    } else {
+      setTitle('');
+      setTimeStr('07:30');
+      setRepeatDays([1, 2, 3, 4, 5]);
+      setSourceType(voiceClones.length > 0 ? 'parent_clone' : 'tts');
+      setSelectedCloneId(voiceClones[0]?.id || '');
+      setTextContent('宝贝快起床啦，太阳晒屁股喽！');
+      setRepeatPlayCount(2);
+    }
+  }, [initialSchedule, visible, voiceClones]);
+
+  const toggleDay = (day: number) => {
+    setRepeatDays(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort()
+    );
+  };
+
+  const selectedCloneProfile = voiceClones.find(c => c.id === selectedCloneId) || voiceClones[0];
+
+  const handlePreviewVoice = async () => {
+    if (!textContent.trim() || previewing) {
+      if (!textContent.trim()) Toast.show({ content: '请先输入要播报的内容' });
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const isCloned = sourceType === 'parent_clone';
+      const voiceType = isCloned ? selectedCloneProfile?.providerVoiceId : undefined;
+      const res = await requestDoubaoTtsAudio({
+        text: textContent.trim(),
+        voiceType,
+        isClonedVoice: isCloned,
+      });
+      if (res.ok && res.audioDataUrl) {
+        Toast.show({ icon: 'success', content: '豆包 TTS 合成成功，正在播放真实音频' });
+        await playAudioOrFallback(
+          res.audioDataUrl,
+          textContent.trim(),
+          sourceType,
+          selectedCloneProfile?.speakerRole || '妈妈'
+        );
+      } else {
+        speakBySourceType(
+          textContent.trim(),
+          sourceType,
+          selectedCloneProfile?.speakerRole || '妈妈'
+        );
+        Toast.show({
+          content: res.error
+            ? `${res.error}（已用本地模拟试听）`
+            : '正在用模拟音色试听',
+        });
+      }
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (isSynthesizing) return;
+    if (!title.trim()) {
+      Toast.show({ icon: 'fail', content: '请填写提醒任务标题' });
+      return;
+    }
+    if (!textContent.trim()) {
+      Toast.show({ icon: 'fail', content: '请填写要转成语音播报的文字内容' });
+      return;
+    }
+
+    setIsSynthesizing(true);
+    try {
+      const [hourStr, minStr] = timeStr.split(':');
+      const cronDays = repeatDays.length > 0 ? repeatDays.join(',') : '*';
+      const cronExpr = `${Number(minStr || 0)} ${Number(hourStr || 7)} * * ${cronDays}`;
+
+      let audioUrl: string | null = initialSchedule?.audioUrl || null;
+      let audioMd5: string | null = initialSchedule?.audioMd5 || null;
+
+      if (sourceType === 'parent_clone' || sourceType === 'tts') {
+        const isCloned = sourceType === 'parent_clone';
+        const voiceType = isCloned ? selectedCloneProfile?.providerVoiceId : undefined;
+        const ttsResult = await requestDoubaoTtsAudio({
+          text: textContent.trim(),
+          voiceType,
+          isClonedVoice: isCloned,
+          persist: true, // 定时语音任务开启持久化，生成 /api/v1/audio/{md5}.mp3 永久地址
+        });
+        if (ttsResult.ok && (ttsResult.audioUrl || ttsResult.audioDataUrl)) {
+          // 优先保存标准 HTTP 播放/下载地址 `/api/v1/audio/{md5}.mp3`，避免在业务表存储庞大的 Base64
+          audioUrl = ttsResult.audioUrl || ttsResult.audioDataUrl || null;
+          audioMd5 = ttsResult.audioMd5 || null;
+        }
+      }
+
+      const cloneMeta =
+        sourceType === 'parent_clone' && selectedCloneProfile
+          ? {
+              clonedVoiceId: selectedCloneProfile.id,
+              clonedSpeakerRole: `${selectedCloneProfile.speakerRole}（豆包克隆）`,
+            }
+          : {
+              clonedVoiceId: null,
+              clonedSpeakerRole: null,
+            };
+
+      if (initialSchedule) {
+        updateSchedule(initialSchedule.id, {
+          title: title.trim(),
+          timeStr,
+          repeatDays,
+          cronExpr,
+          sourceType,
+          ...cloneMeta,
+          textContent: textContent.trim(),
+          audioUrl,
+          audioMd5,
+          repeatPlayCount,
+        });
+        Toast.show({
+          icon: 'success',
+          content: audioUrl
+            ? '已通过豆包合成最新音频并同步设备 RTC'
+            : '定时任务已更新并同步至设备 RTC',
+        });
+      } else {
+        addSchedule({
+          title: title.trim(),
+          timeStr,
+          repeatDays,
+          cronExpr,
+          enabled: true,
+          sourceType,
+          ...cloneMeta,
+          textContent: textContent.trim(),
+          audioUrl,
+          audioMd5,
+          repeatPlayCount,
+        });
+        Toast.show({
+          icon: 'success',
+          content: audioUrl
+            ? `豆包已合成「${selectedCloneProfile?.speakerRole || '专属'}」真实 MP3 音频（MD5: ${audioMd5?.slice(
+                0,
+                6
+              )}）并下发设备`
+            : '定时语音已创建（配置豆包密钥后将自动生成真实 MP3）',
+        });
+      }
+      onClose();
+    } finally {
+      setIsSynthesizing(false);
+    }
+  };
+
+  return (
+    <Popup
+      visible={visible}
+      onMaskClick={onClose}
+      position="bottom"
+      bodyStyle={{
+        height: '86vh',
+        borderTopLeftRadius: '22px',
+        borderTopRightRadius: '22px',
+        background: '#FFFFFF',
+      }}
+    >
+      <div className="flex flex-col h-full text-[#1F2937]">
+        {/* Header */}
+        <div className="px-4 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] flex items-center justify-between">
+          <h3 className="text-h2 text-[#1F2937]">
+            {initialSchedule ? '编辑定时语音播报' : '新建定时语音播报'}
+          </h3>
+          <button type="button" onClick={onClose} className="kid-btn kid-btn-ghost kid-btn-sm">
+            关闭
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-3.5">
+          {/* 1. 提醒时间与标题 */}
+          <div className="kid-card space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-caption text-[#1F2937] block mb-1.5">提醒名称 *</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="如：起床唤醒 / 刷牙提醒"
+                  className="kid-input"
+                  maxLength={30}
+                />
+              </div>
+              <div>
+                <label className="text-caption text-[#1F2937] block mb-1.5">播报时间 (RTC) *</label>
+                <input
+                  type="time"
+                  value={timeStr}
+                  onChange={e => setTimeStr(e.target.value)}
+                  className="kid-input font-mono font-bold"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="text-caption text-[#1F2937] mb-1.5">
+                重复周期（不选代表仅单次响铃）：
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {WEEKDAY_OPTIONS.map(day => {
+                  const checked = repeatDays.includes(day.value);
+                  return (
+                    <button
+                      key={day.value}
+                      type="button"
+                      onClick={() => toggleDay(day.value)}
+                      className={`kid-filter-chip !px-3 ${
+                        checked ? 'kid-filter-chip-selected' : ''
+                      }`}
+                    >
+                      <span>{day.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. 音源类型选择（爸妈克隆声音 TTS / 小铭同学萌音 TTS / 家长直接录音） */}
+          <div className="kid-card space-y-3">
+            <div className="text-caption text-[#1F2937]">选择播报声音类型：</div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { label: '爸妈克隆音 (文字合成)', value: 'parent_clone' as const },
+                { label: `${petConfig.petName}萌音`, value: 'tts' as const },
+                { label: '直接录原声', value: 'record' as const },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSourceType(opt.value)}
+                  className={`kid-filter-chip !px-2 !text-[11px] ${
+                    sourceType === opt.value ? 'kid-filter-chip-selected' : ''
+                  }`}
+                >
+                  <span>{opt.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* 当选择“爸妈克隆音”时，展示已克隆的爸爸/妈妈音色选择器 */}
+            {sourceType === 'parent_clone' && (
+              <div className="p-2.5 rounded-xl bg-[#FAF8F5] border border-[#E8D9C8] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#242620]">
+                    选择要用哪位家长的克隆声音播报：
+                  </span>
+                  {onOpenCloneStudio && (
+                    <button
+                      type="button"
+                      onClick={onOpenCloneStudio}
+                      className="text-[11px] font-bold text-[#B96043] inline-flex items-center gap-1"
+                    >
+                      <IconSparkle className="w-3 h-3" />
+                      <span>去录制/管理克隆声音 →</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {voiceClones.map(vc => (
+                    <button
+                      key={vc.id}
+                      type="button"
+                      onClick={() => setSelectedCloneId(vc.id)}
+                      className={`kid-filter-chip ${
+                        (selectedCloneProfile?.id || '') === vc.id ? 'kid-filter-chip-selected' : ''
+                      }`}
+                    >
+                      <span>{vc.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-caption text-[#1F2937]">
+                  {sourceType === 'parent_clone'
+                    ? `输入文字（自动用${selectedCloneProfile?.speakerRole || '爸妈'}克隆声音合成播报）*`
+                    : sourceType === 'tts'
+                    ? `输入文字（用${petConfig.petName}声音播报）*`
+                    : '录音内容备注 *'}
+                </label>
+                <button
+                  type="button"
+                  disabled={previewing}
+                  onClick={handlePreviewVoice}
+                  className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                >
+                  <IconVolume className="w-3.5 h-3.5" />
+                  <span>{previewing ? '豆包合成中…' : '豆包TTS合成试听'}</span>
+                </button>
+              </div>
+              <textarea
+                rows={3}
+                value={textContent}
+                onChange={e => setTextContent(e.target.value)}
+                placeholder="输入任意文字，例如：堂堂正正，八点半啦，快去刷牙洗脸准备睡觉吧！"
+                className="kid-input"
+                maxLength={150}
+              />
+            </div>
+
+            {sourceType === 'record' && (
+              <div className="pt-2 border-t border-[#F0EFEA] flex items-center justify-between">
+                <span className="text-xs text-[#6B7280]">
+                  {isRecording ? '正在录制家长原声…' : '点击右侧按钮直接录一段固定语音'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isRecording) {
+                      setIsRecording(false);
+                      Toast.show({ icon: 'success', content: '家长原声录制完成' });
+                    } else {
+                      setIsRecording(true);
+                    }
+                  }}
+                  className={`kid-btn kid-btn-sm ${
+                    isRecording ? 'kid-btn-secondary' : 'kid-btn-primary'
+                  }`}
+                >
+                  <IconMic className="w-3.5 h-3.5" />
+                  <span>{isRecording ? '完成录制' : '开始录音'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 3. 连续播报次数与硬件说明 */}
+          <div className="kid-card space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-caption text-[#1F2937]">到点连续播报次数</div>
+                <div className="text-[11px] text-[#6B7280]">
+                  孩子点击设备触摸屏确认后会立即停止播报
+                </div>
+              </div>
+              <Stepper
+                value={repeatPlayCount}
+                onChange={v => setRepeatPlayCount(v)}
+                min={1}
+                max={5}
+              />
+            </div>
+            <p className="text-[11px] text-[#8B8A80] pt-2 border-t border-[#F3F4F6]">
+              硬件保障：云端合成好的爸妈克隆音频会预先缓存至 ESP32-S3 本地 Flash/TF 卡，并由板载 `PCF85063` 独立硬件 RTC 芯片准点唤醒，断网也能正常响起爸妈的声音。
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 bg-[#F9FAFB] border-t border-[#E5E7EB] shrink-0">
+          <button
+            type="button"
+            disabled={isSynthesizing}
+            onClick={handleSubmit}
+            className="w-full kid-btn kid-btn-primary kid-btn-lg"
+          >
+            {isSynthesizing
+              ? '正在调用豆包 TTS 合成爸妈克隆音频…'
+              : initialSchedule
+              ? '保存并重新合成豆包定时音频'
+              : '通过豆包合成音频并下发设备定时播报'}
+          </button>
+        </div>
+      </div>
+    </Popup>
+  );
+};

@@ -1,0 +1,13 @@
+node_modules/
+.next/
+dist/
+build/
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+apps/pet-device/build/
+apps/pet-device/managed_components/
+apps/pet-device/sdkconfig
+apps/pet-device/sdkconfig.old
