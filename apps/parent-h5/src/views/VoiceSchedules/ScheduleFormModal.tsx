@@ -81,6 +81,10 @@ export const ScheduleFormModal: React.FC<Props> = ({
       if (!textContent.trim()) Toast.show({ content: '请先输入要播报的内容' });
       return;
     }
+    if (sourceType === 'parent_clone' && !selectedCloneProfile) {
+      Toast.show({ content: '尚未录制或绑定爸妈克隆音色，请先录制' });
+      return;
+    }
     setPreviewing(true);
     try {
       const isCloned = sourceType === 'parent_clone';
@@ -134,6 +138,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
       let audioUrl: string | null = initialSchedule?.audioUrl || null;
       let audioMd5: string | null = initialSchedule?.audioMd5 || null;
+
+      if (sourceType === 'parent_clone') {
+        if (!selectedCloneProfile) {
+          Toast.show({ content: '尚未录制或绑定爸妈克隆音色，请先录制或选择萌音播报' });
+          return;
+        }
+      }
 
       if (sourceType === 'parent_clone' || sourceType === 'tts') {
         const isCloned = sourceType === 'parent_clone';
@@ -325,20 +336,26 @@ export const ScheduleFormModal: React.FC<Props> = ({
                     </button>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {voiceClones.map(vc => (
-                    <button
-                      key={vc.id}
-                      type="button"
-                      onClick={() => setSelectedCloneId(vc.id)}
-                      className={`kid-filter-chip ${
-                        (selectedCloneProfile?.id || '') === vc.id ? 'kid-filter-chip-selected' : ''
-                      }`}
-                    >
-                      <span>{vc.title}</span>
-                    </button>
-                  ))}
-                </div>
+                {voiceClones.length === 0 ? (
+                  <div className="text-xs text-[#8B8A80] py-2">
+                    尚未录制任何爸妈克隆声音。请点击右上角「去录制/管理克隆声音」添加，或选择「萌音」播报。
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {voiceClones.map(vc => (
+                      <button
+                        key={vc.id}
+                        type="button"
+                        onClick={() => setSelectedCloneId(vc.id)}
+                        className={`kid-filter-chip ${
+                          (selectedCloneProfile?.id || '') === vc.id ? 'kid-filter-chip-selected' : ''
+                        }`}
+                      >
+                        <span>{vc.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

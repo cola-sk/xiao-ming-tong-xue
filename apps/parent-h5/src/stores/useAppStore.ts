@@ -74,28 +74,7 @@ const INITIAL_MESSAGES: ChatVoiceMessage[] = [
   },
 ];
 
-const INITIAL_VOICE_CLONES: VoiceCloneProfile[] = [
-  {
-    id: 'clone-mom-001',
-    familyId: 'fam-001',
-    speakerRole: '妈妈',
-    title: '妈妈的温柔声音（豆包 2.0 小何）',
-    sampleText: '堂堂、正正，我是妈妈，不管什么时候妈妈都最爱你们哦！',
-    providerVoiceId: 'zh_female_xiaohe_uranus_bigtts',
-    status: 'ready',
-    createdAt: '2026-11-16T07:00:00Z',
-  },
-  {
-    id: 'clone-dad-001',
-    familyId: 'fam-001',
-    speakerRole: '爸爸',
-    title: '爸爸的鼓励声音（豆包 2.0 云舟）',
-    sampleText: '堂堂、正正，我是爸爸，遇到不懂的问题勇敢探索哦！',
-    providerVoiceId: 'zh_male_m191_uranus_bigtts',
-    status: 'ready',
-    createdAt: '2026-11-16T07:05:00Z',
-  },
-];
+const INITIAL_VOICE_CLONES: VoiceCloneProfile[] = [];
 
 const INITIAL_SCHEDULES: VoiceSchedule[] = [
   {
@@ -108,10 +87,10 @@ const INITIAL_SCHEDULES: VoiceSchedule[] = [
     timeStr: '07:30',
     repeatDays: [1, 2, 3, 4, 5],
     enabled: true,
-    sourceType: 'parent_clone',
-    clonedVoiceId: 'clone-mom-001',
-    clonedSpeakerRole: '妈妈（克隆音色）',
-    textContent: '太阳晒屁股啦！快起床穿衣服，妈妈给你准备了好吃的早餐哦！',
+    sourceType: 'tts',
+    clonedVoiceId: null,
+    clonedSpeakerRole: null,
+    textContent: '太阳晒屁股啦！快起床穿衣服，准备吃好吃的早餐哦！',
     repeatPlayCount: 2,
     lastAckStatus: 'confirmed',
     lastAckAt: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
@@ -440,7 +419,27 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'xiaoming_pet_parent_store_v2',
-      version: 4,
+      version: 5,
+      migrate: (persistedState: any) => {
+        if (!persistedState) return persistedState;
+        // 自动清理旧本地缓存中预设的测试音色数据
+        if (Array.isArray(persistedState.voiceClones)) {
+          persistedState.voiceClones = persistedState.voiceClones.filter(
+            (vc: any) =>
+              vc.providerVoiceId !== 'zh_female_xiaohe_uranus_bigtts' &&
+              vc.providerVoiceId !== 'zh_male_m191_uranus_bigtts'
+          );
+        }
+        if (Array.isArray(persistedState.schedules)) {
+          persistedState.schedules = persistedState.schedules.map((s: any) => {
+            if (s.clonedVoiceId === 'clone-mom-001' || s.clonedVoiceId === 'clone-dad-001') {
+              return { ...s, sourceType: 'tts', clonedVoiceId: null, clonedSpeakerRole: null };
+            }
+            return s;
+          });
+        }
+        return persistedState;
+      },
       partialize: s => ({
         family: s.family,
         children: s.children,

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getDoubaoConfig,
   isDoubaoConfigured,
   uploadDoubaoVoiceClone,
   getDoubaoVoiceCloneStatus,
@@ -14,13 +13,10 @@ import {
 export async function GET(request: NextRequest) {
   const speakerId = request.nextUrl.searchParams.get('speakerId');
   const configured = isDoubaoConfigured();
-  const cfg = getDoubaoConfig();
 
   if (!speakerId) {
     return NextResponse.json({
       configured,
-      defaultMomSpeakerId: cfg.defaultMomSpeakerId,
-      defaultDadSpeakerId: cfg.defaultDadSpeakerId,
     });
   }
 
@@ -50,12 +46,12 @@ export async function POST(request: NextRequest) {
   const speakerRole: '妈妈' | '爸爸' = body.speakerRole === '爸爸' ? '爸爸' : '妈妈';
   const audioBase64: string = body.audioBase64 || '';
   const audioFormat: 'wav' | 'mp3' = body.audioFormat === 'mp3' ? 'mp3' : 'wav';
-  const cfg = getDoubaoConfig();
 
-  // 火山引擎要求传入您已在火山控制台申请的专属 Speaker ID（通常形如 S_xxxxxxxx）
+  // 豆包声音复刻专属 Speaker ID：支持用户自定义或留空自动生成唯一 S_xxx
+  const customSpeakerId = (body.speakerId || '').trim();
   const speakerId: string =
-    (body.speakerId || '').trim() ||
-    (speakerRole === '爸爸' ? cfg.defaultDadSpeakerId : cfg.defaultMomSpeakerId);
+    customSpeakerId ||
+    `S_${speakerRole === '爸爸' ? 'dad' : 'mom'}_${Date.now().toString(36)}`;
 
   if (!isDoubaoConfigured()) {
     return NextResponse.json(

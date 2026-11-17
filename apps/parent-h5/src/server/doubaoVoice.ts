@@ -13,8 +13,6 @@ export interface DoubaoConfig {
   v3TtsResourceId: string;
   /** 声音复刻上传训练 Resource-Id，默认 volc.megatts.voiceclone */
   cloneUploadResourceId: string;
-  defaultMomSpeakerId: string;
-  defaultDadSpeakerId: string;
   defaultPetVoiceType: string;
 }
 
@@ -24,10 +22,6 @@ export function getDoubaoConfig(): DoubaoConfig {
     v3CloneResourceId: process.env.VOLC_V3_CLONE_RESOURCE_ID || 'seed-icl-2.0',
     v3TtsResourceId: process.env.VOLC_V3_TTS_RESOURCE_ID || 'seed-tts-2.0',
     cloneUploadResourceId: process.env.VOLC_CLONE_RESOURCE_ID || 'volc.megatts.voiceclone',
-    defaultMomSpeakerId:
-      process.env.VOLC_SPEAKER_ID_MOM || 'zh_female_xiaohe_uranus_bigtts',
-    defaultDadSpeakerId:
-      process.env.VOLC_SPEAKER_ID_DAD || 'zh_male_m191_uranus_bigtts',
     defaultPetVoiceType:
       process.env.VOLC_PET_VOICE_TYPE || 'zh_female_vv_uranus_bigtts',
   };
@@ -233,8 +227,8 @@ export async function synthesizeDoubaoTts(params: {
     }
   }
 
-  // 仅当音色编码以 S_ 开头（火山控制台生成的复刻专属 Speaker ID）时优先走 seed-icl；
-  // 若使用的是豆包 2.0 预置爸妈音色（_uranus_bigtts）或 1.0 音色，则优先走 seed-tts-2.0 -> seed-tts-1.0
+  // 仅当音色编码以 S_ 开头（复刻专属 Speaker ID）时走 seed-icl-2.0；
+  // 宠物玩具官方内置音色（如 zh_female_vv_uranus_bigtts）则走 seed-tts-2.0
   const isCustomClonedSpeaker = Boolean(speaker.startsWith('S_'));
 
   const candidateResourceIds = isCustomClonedSpeaker

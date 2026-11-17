@@ -30,7 +30,6 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
   const [title, setTitle] = useState('妈妈的温柔声音');
   const [speakerIdInput, setSpeakerIdInput] = useState('');
   const [doubaoConfigured, setDoubaoConfigured] = useState<boolean | null>(null);
-  const [defaultIds, setDefaultIds] = useState<{ mom: string; dad: string }>({ mom: '', dad: '' });
 
   const [isRecording, setIsRecording] = useState(false);
   const [recordSec, setRecordSec] = useState(0);
@@ -50,18 +49,14 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       .then(r => r.json())
       .then(data => {
         setDoubaoConfigured(Boolean(data.configured));
-        const mom = data.defaultMomSpeakerId || '';
-        const dad = data.defaultDadSpeakerId || '';
-        setDefaultIds({ mom, dad });
-        setSpeakerIdInput(prev => prev || (speakerRole === '爸爸' ? dad : mom));
       })
       .catch(() => setDoubaoConfigured(false));
-  }, [visible, speakerRole]);
+  }, [visible]);
 
   const handleSelectRole = (role: '妈妈' | '爸爸') => {
     setSpeakerRole(role);
     setTitle(role === '妈妈' ? '妈妈的温柔声音' : '爸爸的鼓励声音');
-    setSpeakerIdInput(role === '爸爸' ? defaultIds.dad : defaultIds.mom);
+    setSpeakerIdInput('');
     setRecordedWavUrl('');
     setRecordedWavBase64('');
   };
@@ -119,10 +114,10 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       Toast.show({ content: '请先录制或上传 5~15 秒的 WAV/MP3 声音样本' });
       return;
     }
-    if (!speakerIdInput.trim()) {
-      Toast.show({ content: '请填写豆包声音复刻专属音色 ID（如 S_xxxxxx）' });
-      return;
-    }
+
+    const resolvedSpeakerId =
+      speakerIdInput.trim() ||
+      `S_${speakerRole === '爸爸' ? 'dad' : 'mom'}_${Date.now().toString(36)}`;
 
     setIsCloning(true);
     try {
@@ -132,7 +127,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         body: JSON.stringify({
           speakerRole,
           title,
-          speakerId: speakerIdInput.trim(),
+          speakerId: resolvedSpeakerId,
           audioBase64: recordedWavBase64,
           audioFormat: 'wav',
           sampleText: SAMPLE_SCRIPTS[speakerRole],
@@ -144,18 +139,20 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         return;
       }
 
+      const finalVoiceId = data.providerVoiceId || resolvedSpeakerId;
       addVoiceCloneProfile({
         speakerRole,
         title,
         sampleText: SAMPLE_SCRIPTS[speakerRole],
         sampleAudioUrl: recordedWavUrl,
-        providerVoiceId: data.providerVoiceId || speakerIdInput.trim(),
+        providerVoiceId: finalVoiceId,
       });
       setRecordedWavUrl('');
       setRecordedWavBase64('');
+      setSpeakerIdInput('');
       Toast.show({
         icon: 'success',
-        content: `已上传至火山引擎豆包声音复刻（音色 ID: ${data.providerVoiceId}）！`,
+        content: `已上传至火山引擎豆包声音复刻（音色 ID: ${finalVoiceId}）！`,
       });
     } finally {
       setIsCloning(false);
@@ -261,67 +258,74 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
             </div>
 
             <div className="space-y-2">
-              {voiceClones.map(vc => (
-                <div
-                  key={vc.id}
-                  className="p-2.5 rounded-xl bg-[#FAF8F5] border border-[#E8D9C8] flex items-center justify-between gap-2 flex-wrap"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="kid-status-chip kid-status-complete">{vc.speakerRole}</span>
-                      <span className="font-bold text-xs text-[#242620] truncate">{vc.title}</span>
+              {voiceClones.length === 0 ? (
+                <div className="text-center py-5 text-xs text-[#8B8A80] bg-[#FAF8F5] rounded-xl border border-dashed border-[#E8D9C8]">
+                  暂无绑定的爸妈音色，请在下方录制或上传原声音频进行豆包声音复刻
+                </div>
+              ) : (
+                voiceClones.map(vc => (
+                  <div
+                    key={vc.id}
+                    className="p-2.5 rounded-xl bg-[#FAF8F5] border border-[#E8D9C8] flex items-center justify-between gap-2 flex-wrap"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="kid-status-chip kid-status-complete">{vc.speakerRole}</span>
+                        <span className="font-bold text-xs text-[#242620] truncate">{vc.title}</span>
+                      </div>
+                      <div className="text-[10px] text-[#77786F] mt-1 font-mono truncate">
+                        speaker_id: {vc.providerVoiceId}
+                      </div>
                     </div>
-                    <div className="text-[10px] text-[#77786F] mt-1 font-mono truncate">
-                      speaker_id: {vc.providerVoiceId}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={checkingId === vc.id}
-                      onClick={() => handleCheckStatus(vc)}
-                      className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
-                    >
-                      <span>{checkingId === vc.id ? '查询中…' : '查状态'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={synthesizingId === vc.id}
-                      onClick={() => handleTestSynthesize(vc)}
-                      className="kid-btn kid-btn-primary kid-btn-sm !h-6 !min-h-[24px] !px-2.5 !text-[11px]"
-                    >
-                      <IconVolume className="w-3 h-3" />
-                      <span>
-                        {synthesizingId === vc.id ? '豆包合成中…' : '豆包TTS合成试听'}
-                      </span>
-                    </button>
-                    {voiceClones.length > 1 && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={checkingId === vc.id}
+                        onClick={() => handleCheckStatus(vc)}
+                        className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                      >
+                        <span>{checkingId === vc.id ? '查询中…' : '查状态'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={synthesizingId === vc.id}
+                        onClick={() => handleTestSynthesize(vc)}
+                        className="kid-btn kid-btn-primary kid-btn-sm !h-6 !min-h-[24px] !px-2.5 !text-[11px]"
+                      >
+                        <IconVolume className="w-3 h-3" />
+                        <span>
+                          {synthesizingId === vc.id ? '豆包合成中…' : '豆包TTS合成试听'}
+                        </span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => deleteVoiceCloneProfile(vc.id)}
                         className="kid-btn kid-btn-danger-ghost kid-btn-sm !h-6 !min-h-[24px] !px-1.5"
+                        title="删除此音色"
                       >
                         <DeleteOutline />
                       </button>
-                    )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             {/* 输入任意文字测试豆包克隆 TTS */}
-            <div className="pt-2 border-t border-[#F0EFEA]">
-              <label className="text-[11px] text-[#6B7280] block mb-1">
-                输入任意文字，点击上方「豆包TTS合成试听」直接生成爸妈真实模拟语音：
-              </label>
-              <input
-                type="text"
-                value={testText}
-                onChange={e => setTestText(e.target.value)}
-                className="kid-input !text-xs"
-                placeholder="输入任意文字，调用豆包 /api/v1/tts 合成 MP3"
-              />
-            </div>
+            {voiceClones.length > 0 && (
+              <div className="pt-2 border-t border-[#F0EFEA]">
+                <label className="text-[11px] text-[#6B7280] block mb-1">
+                  输入任意文字，点击上方「豆包TTS合成试听」直接生成爸妈真实模拟语音：
+                </label>
+                <input
+                  type="text"
+                  value={testText}
+                  onChange={e => setTestText(e.target.value)}
+                  className="kid-input !text-xs"
+                  placeholder="输入任意文字，调用豆包 /api/v1/tts 合成 MP3"
+                />
+              </div>
+            )}
           </div>
 
           {/* 2. 录制并上传新声音复刻 */}
@@ -360,13 +364,13 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
               </div>
               <div>
                 <label className="text-caption text-[#1F2937] block mb-1">
-                  火山引擎 Speaker ID (`S_xxx`) *
+                  火山引擎 Speaker ID（自定义 S_xxx，留空自动生成）
                 </label>
                 <input
                   type="text"
                   value={speakerIdInput}
                   onChange={e => setSpeakerIdInput(e.target.value)}
-                  placeholder="如：S_123456789"
+                  placeholder="如：S_mom_01（留空将自动生成）"
                   className="kid-input font-mono"
                 />
               </div>

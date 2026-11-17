@@ -91,11 +91,14 @@ export const VoiceSchedulesPage: React.FC = () => {
     }
 
     // 若该定时任务尚未保存音频地址（如初始演示数据），首次触发时合成并永久保存 audioUrl 到任务记录，后续每次播放直接读已存地址！
-    const cloneProfile = voiceClones.find(c => c.id === sched.clonedVoiceId) || voiceClones[0];
+    const cloneProfile = sched.clonedVoiceId
+      ? voiceClones.find(c => c.id === sched.clonedVoiceId)
+      : undefined;
+    const isCloned = Boolean(sched.sourceType === 'parent_clone' && cloneProfile?.providerVoiceId);
     const ttsRes = await requestDoubaoTtsAudio({
       text: sched.textContent,
-      voiceType: sched.sourceType === 'parent_clone' ? cloneProfile?.providerVoiceId : undefined,
-      isClonedVoice: sched.sourceType === 'parent_clone',
+      voiceType: isCloned ? cloneProfile?.providerVoiceId : undefined,
+      isClonedVoice: isCloned,
       persist: true,
     });
     const savedUrl = ttsRes.audioUrl || ttsRes.audioDataUrl;
