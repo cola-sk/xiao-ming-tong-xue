@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { SafeArea } from 'antd-mobile';
 import { useAppStore } from '../stores/useAppStore';
-import { useMqttParentSync } from '../utils/useMqttParentSync';
 import { BrandLogoXiaoming, IconPaw, IconChatBubble, IconClock, IconDevice } from './Icons';
 
 import { WeChatVoicePage } from '../views/WeChatVoice';
@@ -14,7 +13,6 @@ import { DeviceSettingsPage } from '../views/DeviceSettings';
 export const Layout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('wechat');
   const { messages, schedules } = useAppStore();
-  const { mqttConnected, wssConfigured } = useMqttParentSync();
 
   const unreadChildVoiceCount = messages.filter(
     m => m.direction === 'device_to_parent' && m.status === 'unread'
@@ -62,18 +60,10 @@ export const Layout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            {wssConfigured && (
-              <span
-                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                  mqttConnected
-                    ? 'bg-[#E6F4EE] text-[#2F6F56]'
-                    : 'bg-[#F3F4F6] text-[#9CA3AF]'
-                }`}
-              >
-                {mqttConnected ? 'MQTT 实时' : 'MQTT 重连中'}
-              </span>
-            )}
-            <span className="family-summary-chip">AMOLED-2.16</span>
+            <button type="button" className="family-summary-chip" onClick={async () => {
+              await fetch('/api/v1/auth', { method: 'DELETE' });
+              window.location.reload();
+            }}>退出</button>
           </div>
         </div>
       </header>

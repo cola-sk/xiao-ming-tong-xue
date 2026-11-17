@@ -4,7 +4,9 @@
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_http_client.h"
+#include "pet_http_auth.h"
 #include "esp_crt_bundle.h"
 #include "mbedtls/base64.h"
 #include "cJSON.h"
@@ -72,8 +74,10 @@ static esp_err_t download_and_play_chat_audio(const char *msg_id, const char *au
         .method = HTTP_METHOD_GET,
         .timeout_ms = 12000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, full_url);
     esp_err_t err = esp_http_client_open(client, 0);
     if (err == ESP_OK) {
         int content_len = esp_http_client_fetch_headers(client);
@@ -89,8 +93,8 @@ static esp_err_t download_and_play_chat_audio(const char *msg_id, const char *au
                     if (r <= 0) break;
                     total_read += r;
                 }
-                if (total_read > 0) {
-                    chat_storage_save(msg_id, wav_buf, (size_t)total_read);
+                if (total_read == content_len &&
+                    chat_storage_save(msg_id, wav_buf, (size_t)total_read) == ESP_OK) {
                     if (chat_storage_get_path(msg_id, local_path, sizeof(local_path))) {
                         audio_engine_play_local_file(local_path);
                     }
@@ -121,8 +125,10 @@ static esp_err_t synthesize_and_play_text(const char *text) {
         .method = HTTP_METHOD_POST,
         .timeout_ms = 12000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
@@ -156,8 +162,10 @@ esp_err_t chat_client_ask_ai(const char *question_text) {
         .method = HTTP_METHOD_POST,
         .timeout_ms = 15000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
@@ -180,10 +188,11 @@ esp_err_t chat_client_ask_ai(const char *question_text) {
 
 esp_err_t chat_client_fetch_unread(void) {
     if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (s_pending_msg.valid) return ESP_OK;
 
     char url[256];
     snprintf(url, sizeof(url),
-             "%s/api/v1/chat/messages?deviceId=%s&direction=parent_to_device&status=unread",
+             "%s/api/v1/chat/messages?deviceId=%s&direction=parent_to_device&status=unread&limit=1",
              CONFIG_PET_SERVER_URL, wifi_manager_get_device_id());
 
     char *buf = calloc(1, CHAT_HTTP_BUF_SIZE);
@@ -195,11 +204,13 @@ esp_err_t chat_client_fetch_unread(void) {
         .method = HTTP_METHOD_GET,
         .timeout_ms = 8000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
         .event_handler = chat_http_event_handler,
         .user_data = &ctx,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, url);
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK && esp_http_client_get_status_code(client) == 200 && ctx.len > 0) {
         cJSON *root = cJSON_Parse(ctx.buf);
@@ -254,10 +265,10 @@ esp_err_t chat_client_play_next_unread(void) {
     } else {
         synthesize_and_play_text(s_pending_msg.text);
     }
-    // 通知云端已读（同时销毁服务端暂存的聊天音频，不长期保存）
-    device_sync_send_voice_read(s_pending_msg.id);
-    s_pending_msg.valid = false;
-    return ESP_OK;
+    // The audio engine is currently a stub with no playback-completion result.
+    // Never acknowledge or delete cloud audio until real playback is confirmed.
+    ESP_LOGW(TAG, "Playback completion is not implemented; keeping message unread");
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_len,
@@ -265,7 +276,7 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
     if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
 
     char local_msg_id[48];
-    snprintf(local_msg_id, sizeof(local_msg_id), "msg_dev_%lld", (long long)time(NULL));
+    snprintf(local_msg_id, sizeof(local_msg_id), "msg_dev_%lld_%08lx", (long long)time(NULL), (unsigned long)esp_random());
 
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "id", local_msg_id);
@@ -278,19 +289,23 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
     cJSON_AddBoolToObject(body, "autoPlay", false);
 
     if (wav_data && wav_len > 0) {
-        chat_storage_save(local_msg_id, wav_data, wav_len);
         size_t b64_max_len = ((wav_len + 2) / 3) * 4 + 4;
         char *b64_buf = malloc(b64_max_len);
-        if (b64_buf) {
-            size_t out_len = 0;
-            if (mbedtls_base64_encode((unsigned char *)b64_buf, b64_max_len, &out_len,
-                                      wav_data, wav_len) == 0) {
-                b64_buf[out_len] = '\0';
-                cJSON_AddStringToObject(body, "audioBase64", b64_buf);
-                cJSON_AddStringToObject(body, "audioMime", "audio/wav");
-            }
-            free(b64_buf);
+        if (!b64_buf) {
+            cJSON_Delete(body);
+            return ESP_ERR_NO_MEM;
         }
+        size_t out_len = 0;
+        if (mbedtls_base64_encode((unsigned char *)b64_buf, b64_max_len, &out_len,
+                                  wav_data, wav_len) != 0) {
+            free(b64_buf);
+            cJSON_Delete(body);
+            return ESP_FAIL;
+        }
+        b64_buf[out_len] = '\0';
+        cJSON_AddStringToObject(body, "audioBase64", b64_buf);
+        cJSON_AddStringToObject(body, "audioMime", "audio/wav");
+        free(b64_buf);
     }
 
     char *post_data = cJSON_PrintUnformatted(body);
@@ -305,14 +320,18 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
         .method = HTTP_METHOD_POST,
         .timeout_ms = 12000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Uploaded child WeChat voice -> HTTP %d", esp_http_client_get_status_code(client));
+        int status = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "Uploaded child WeChat voice -> HTTP %d", status);
+        if (status < 200 || status >= 300) err = ESP_FAIL;
     } else {
         ESP_LOGE(TAG, "Failed to upload child WeChat voice: %s", esp_err_to_name(err));
     }

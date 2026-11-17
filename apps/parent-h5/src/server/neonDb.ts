@@ -130,6 +130,7 @@ export async function ensureNeonSchema(): Promise<void> {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `;
+      await sql`CREATE INDEX IF NOT EXISTS chat_messages_device_inbox_idx ON chat_voice_messages (device_id, direction, status, created_at, id)`;
       await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_base64 TEXT`;
       await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_mime TEXT`;
     })().catch(err => {

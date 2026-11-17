@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="132" fill="#B96043"/>
-  <path d="M146 166C146 229 187 267 256 267C325 267 366 229 366 166M256 267V365" stroke="#FFF8EF" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="366" cy="166" r="12" fill="#EFC68C"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>小铭同学</title>
+  <rect width="256" height="256" rx="62" fill="#F5F4F0"/>
+  <path fill="#866E5D" d="M42 188c30-10 45-27 63-56 23-38 51-62 109-70-28 20-48 43-65 70-22 34-54 54-107 56Z"/>
+  <path fill="#D6A98B" d="M68 198c36-16 63-36 89-65 12-13 28-24 49-30-22 38-50 65-87 80-16 7-33 12-51 15Z"/>
 </svg>

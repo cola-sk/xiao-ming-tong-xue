@@ -7,7 +7,7 @@ import {
   listVoiceSchedules,
   getPetAiConfig,
 } from '@/server/appDataStore';
-import { notifyParentEvent } from '@/server/emqxPublisher';
+import { createHash } from 'node:crypto';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,20 +40,18 @@ export async function POST(request: NextRequest) {
       wifiRssi: typeof body.wifiRssi === 'number' ? body.wifiRssi : undefined,
     });
 
-    // 2) 若携带业务确认事件，同步落库并通过 EMQX 通知家长端即时刷新
+    // 2) 若携带业务确认事件，同步落库
     if (event === 'alarm_ack' && body.taskId) {
       await ackVoiceSchedule(String(body.taskId));
-      await notifyParentEvent(deviceId, 'alarm_ack', { taskId: String(body.taskId) });
     } else if (event === 'voice_read' && body.msgId) {
       await markChatMessagePlayed(String(body.msgId));
-      await notifyParentEvent(deviceId, 'voice_read', { msgId: String(body.msgId) });
     }
 
     // 3) 查询待下行同步的任务与未读消息摘要
     const [unreadMsgs, schedules, petConfig] = await Promise.all([
-      listChatMessages({ deviceId, direction: 'parent_to_device', status: 'unread' }).catch(() => []),
-      listVoiceSchedules(deviceId).catch(() => []),
-      getPetAiConfig(deviceId).catch(() => null),
+      listChatMessages({ deviceId, direction: 'parent_to_device', status: 'unread' }),
+      listVoiceSchedules(deviceId),
+      getPetAiConfig(deviceId),
     ]);
 
     return NextResponse.json({
@@ -65,9 +63,9 @@ export async function POST(request: NextRequest) {
         volumeLevel: petConfig?.volumeLevel ?? device.volumeLevel,
         petName: petConfig?.petName ?? '小铭同学',
         voiceId: petConfig?.voiceId ?? 'zh_female_vv_uranus_bigtts',
-        heartbeatIntervalSec: 15,
         unreadMessagesCount: unreadMsgs.length,
         enabledSchedulesCount: schedules.filter(s => s.enabled).length,
+        scheduleVersion: createHash('sha256').update(JSON.stringify([...schedules].sort((a, b) => a.id.localeCompare(b.id)))).digest('hex'),
       },
     });
   } catch (err) {

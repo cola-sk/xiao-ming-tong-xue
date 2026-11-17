@@ -117,12 +117,15 @@ esp_err_t chat_storage_save(const char *msg_id, const uint8_t *wav_data, size_t 
     snprintf(path, sizeof(path), "%s/%s.wav", WECHAT_DIR_BASE, msg_id);
 
     FILE *fp = fopen(path, "wb");
-    if (fp) {
-        fwrite(wav_data, 1, wav_len, fp);
-        fclose(fp);
-    } else {
-        // 未挂载实体 SD/LittleFS 时依然维护内存索引统计，便于调试
-        ESP_LOGD(TAG, "VFS not mounted for %s; tracking quota index in RAM", path);
+    if (!fp) {
+        ESP_LOGE(TAG, "Cannot open audio cache file %s", path);
+        return ESP_FAIL;
+    }
+    size_t written = fwrite(wav_data, 1, wav_len, fp);
+    int close_result = fclose(fp);
+    if (written != wav_len || close_result != 0) {
+        unlink(path);
+        return ESP_FAIL;
     }
 
     wechat_cache_entry_t *entry = &s_entries[s_entry_count++];

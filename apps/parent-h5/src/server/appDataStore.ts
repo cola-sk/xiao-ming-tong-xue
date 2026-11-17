@@ -488,46 +488,38 @@ export async function listChatMessages(params?: {
   deviceId?: string;
   direction?: 'parent_to_device' | 'device_to_parent';
   status?: 'unread' | 'played';
+  limit?: number;
 }): Promise<ChatVoiceMessageRecord[]> {
   const sql = getNeonSql();
   if (sql) {
     await ensureNeonSchema();
+    const deviceId = params?.deviceId && params.deviceId !== 'all' ? params.deviceId : null;
+    const direction = params?.direction || null;
+    const status = params?.status || null;
     const rows = await sql`
       SELECT id, device_id, direction, sender_name, audio_url, duration_sec, asr_text, auto_play, status, created_at
       FROM chat_voice_messages
-      ORDER BY created_at ASC
-      LIMIT 100
+      WHERE (${deviceId}::text IS NULL OR device_id = ${deviceId})
+        AND (${direction}::text IS NULL OR direction = ${direction})
+        AND (${status}::text IS NULL OR status = ${status})
+      ORDER BY created_at ASC, id ASC
+      LIMIT ${params?.limit ?? null}
     `;
-    return rows
-      .map(r => mapChatMsgRow(r as Record<string, unknown>))
-      .filter(m => {
-        if (
-          params?.deviceId &&
-          params.deviceId !== 'all' &&
-          m.deviceId !== params.deviceId &&
-          m.deviceId !== 'default'
-        ) {
-          return false;
-        }
-        if (params?.direction && m.direction !== params.direction) return false;
-        if (params?.status && m.status !== params.status) return false;
-        return true;
-      });
+    return rows.map(r => mapChatMsgRow(r as Record<string, unknown>));
   }
 
   return Array.from(memChatMessages.values()).filter(m => {
     if (
       params?.deviceId &&
       params.deviceId !== 'all' &&
-      m.deviceId !== params.deviceId &&
-      m.deviceId !== 'default'
+      m.deviceId !== params.deviceId
     ) {
       return false;
     }
     if (params?.direction && m.direction !== params.direction) return false;
     if (params?.status && m.status !== params.status) return false;
     return true;
-  });
+  }).slice(0, params?.limit);
 }
 
 const memTransientAudio = new Map<string, { base64: string; mimeType: string }>();

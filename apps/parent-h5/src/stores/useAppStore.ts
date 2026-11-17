@@ -87,8 +87,8 @@ interface AppState {
     audioBlob?: Blob;
     audioBase64?: string;
     audioMime?: string;
-  }) => string;
-  markMessagePlayed: (msgId: string) => void;
+  }) => Promise<string>;
+  markMessagePlayed: (msgId: string) => Promise<void>;
   syncMessagesFromServer: () => Promise<void>;
 
   // Actions - 功能二：定时语音播报
@@ -172,7 +172,7 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      sendParentVoiceMessage: ({
+      sendParentVoiceMessage: async ({
         senderName,
         asrText,
         durationSec,
@@ -183,7 +183,7 @@ export const useAppStore = create<AppState>()(
         audioMime,
       }) => {
         const state = get();
-        const id = `msg_${Date.now()}`;
+        const id = `msg_${crypto.randomUUID()}`;
         const deviceId = state.selectedDeviceId || 'default';
         const cleanText = asrText.trim() || `（${durationSec}秒原声语音）`;
         const remoteAudioUrl = audioBase64 ? `/api/v1/chat/messages/${id}/audio` : '';
@@ -201,11 +201,7 @@ export const useAppStore = create<AppState>()(
           status: 'unread',
           createdAt: new Date().toISOString(),
         };
-        set(s => ({ messages: [...s.messages, newMsg] }));
-        if (audioBlob) {
-          void saveLocalChatAudio(id, audioBlob);
-        }
-        fetch('/api/v1/chat/messages', {
+        const response = await fetch('/api/v1/chat/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -219,19 +215,21 @@ export const useAppStore = create<AppState>()(
             audioBase64,
             audioMime,
           }),
-        }).catch(() => {});
+        });
+        if (!response.ok) throw new Error('发送失败，请重试');
+        set(s => ({ messages: [...s.messages.filter(m => m.id !== id), newMsg] }));
+        if (audioBlob) void saveLocalChatAudio(id, audioBlob);
         return id;
       },
 
-      markMessagePlayed: msgId => {
-        set(s => ({
-          messages: s.messages.map(m => (m.id === msgId ? { ...m, status: 'played' } : m)),
-        }));
-        fetch('/api/v1/chat/messages', {
+      markMessagePlayed: async msgId => {
+        const response = await fetch('/api/v1/chat/messages', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: msgId }),
-        }).catch(() => {});
+        });
+        if (!response.ok) throw new Error('已读状态同步失败');
+        set(s => ({ messages: s.messages.map(m => (m.id === msgId ? { ...m, status: 'played' } : m)) }));
       },
 
       syncMessagesFromServer: async () => {

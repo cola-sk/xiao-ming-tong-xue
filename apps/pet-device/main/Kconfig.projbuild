@@ -18,6 +18,13 @@ menu "AI Chat Pet (小铭同学) Configuration"
         help
             Base URL of the Next.js backend deployed on Vercel (without trailing slash).
 
+    config PET_DEVICE_TOKEN
+        string "Device API token (same as PET_DEVICE_TOKEN on server)"
+        default ""
+        help
+            Provision a unique random token of at least 32 characters via sdkconfig.
+            Treat firmware and sdkconfig as secrets. Only sent to the HTTPS server URL.
+
     config PET_HEARTBEAT_INTERVAL_SEC
         int "Device Heartbeat Interval (seconds)"
         range 5 120

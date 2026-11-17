@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
+#include "pet_http_auth.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "wifi_manager.h"
@@ -18,7 +19,7 @@ static const char *TAG = "device_sync";
 #define FIRMWARE_VERSION "1.0.0"
 #define HTTP_RESP_BUF_SIZE 1024
 
-static int s_last_synced_sched_count = -1;
+static char s_last_schedule_version[65] = {0};
 
 typedef struct {
     char buf[HTTP_RESP_BUF_SIZE];
@@ -71,10 +72,11 @@ static void apply_server_config(const char *resp_json) {
             chat_client_fetch_unread();
         }
 
-        cJSON *sched_cnt = cJSON_GetObjectItem(cfg, "enabledSchedulesCount");
-        if (cJSON_IsNumber(sched_cnt) && sched_cnt->valueint != s_last_synced_sched_count) {
-            s_last_synced_sched_count = sched_cnt->valueint;
-            rtc_scheduler_fetch_and_sync();
+        cJSON *version = cJSON_GetObjectItem(cfg, "scheduleVersion");
+        if (cJSON_IsString(version) && strlen(version->valuestring) == 64 &&
+            strcmp(version->valuestring, s_last_schedule_version) != 0 &&
+            rtc_scheduler_fetch_and_sync() == ESP_OK) {
+            snprintf(s_last_schedule_version, sizeof(s_last_schedule_version), "%s", version->valuestring);
         }
     }
 
@@ -111,11 +113,13 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
         .method = HTTP_METHOD_POST,
         .timeout_ms = 8000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
         .event_handler = http_event_handler,
         .user_data = &resp_ctx,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
@@ -123,6 +127,7 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "Sync [%s] -> HTTP %d", event_name ? event_name : "heartbeat", status);
+        if (status < 200 || status >= 300) err = ESP_FAIL;
         if (status == 200 && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) {
             apply_server_config(resp_ctx.buf);
         }

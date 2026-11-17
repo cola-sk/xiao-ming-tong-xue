@@ -7,10 +7,10 @@ export const metadata: Metadata = {
   manifest: '/manifest.webmanifest',
   icons: {
     icon: [
-      { url: '/icons/xiaoming-logo.svg?v=2', type: 'image/svg+xml' },
-      { url: '/favicon.ico?v=4', sizes: 'any' },
+      { url: '/icons/xiaoming-logo.svg?v=3', type: 'image/svg+xml' },
+      { url: '/favicon.ico?v=5', sizes: 'any' },
     ],
-    apple: '/icons/apple-touch-icon.png?v=4',
+    apple: '/icons/apple-touch-icon.png?v=5',
   },
   appleWebApp: {
     capable: true,
@@ -36,7 +36,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <head>
-        <link rel="icon" type="image/svg+xml" href="/icons/xiaoming-logo.svg?v=2" />
+        <link rel="icon" type="image/svg+xml" href="/icons/xiaoming-logo.svg?v=3" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

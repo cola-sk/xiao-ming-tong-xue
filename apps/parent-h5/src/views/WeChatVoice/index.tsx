@@ -14,6 +14,15 @@ import {
   clearLocalChatAudio,
 } from '../../utils/chatAudioDb';
 
+function playRecordedAudio(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(url);
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error('音频播放失败'));
+    audio.play().catch(reject);
+  });
+}
+
 export const WeChatVoicePage: React.FC = () => {
   const {
     messages,
@@ -29,11 +38,19 @@ export const WeChatVoicePage: React.FC = () => {
   useEffect(() => {
     void syncDevicesFromServer();
     void syncMessagesFromServer();
-    const timer = window.setInterval(() => {
+    const syncWhenVisible = () => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
       void syncDevicesFromServer();
       void syncMessagesFromServer();
-    }, 10000);
-    return () => clearInterval(timer);
+    };
+    const timer = window.setInterval(syncWhenVisible, 10000);
+    document.addEventListener('visibilitychange', syncWhenVisible);
+    window.addEventListener('online', syncWhenVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', syncWhenVisible);
+      window.removeEventListener('online', syncWhenVisible);
+    };
   }, [syncDevicesFromServer, syncMessagesFromServer]);
 
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
@@ -66,27 +83,26 @@ export const WeChatVoicePage: React.FC = () => {
       // 1) 优先从家长端本地 IndexedDB 读取已缓存的双向原声录音
       const localUrl = await getLocalChatAudioUrl(msg.id);
       if (localUrl) {
-        await playAudioOrFallback(localUrl, msg.asrText);
+        await playRecordedAudio(localUrl);
       } else if (msg.audioUrl) {
         // 2) 若在云端中转队列中：先拉取 WAV 存入本地 IndexedDB，再播放并标记已读以释放云端中转
         try {
           const resp = await fetch(msg.audioUrl);
           if (resp.ok) {
             const blob = await resp.blob();
-            await saveLocalChatAudio(msg.id, blob);
+            await saveLocalChatAudio(msg.id, blob, true);
             refreshLocalStats();
             const objUrl = URL.createObjectURL(blob);
-            await playAudioOrFallback(objUrl, msg.asrText);
-          } else if (msg.asrText) {
-            const tts = await requestDoubaoTtsAudio({
-              text: msg.asrText,
-              voiceType: petConfig.voiceId,
-              persist: false,
-            });
-            await playAudioOrFallback(tts.audioDataUrl, msg.asrText);
+            try {
+              await playRecordedAudio(objUrl);
+            } finally {
+              URL.revokeObjectURL(objUrl);
+            }
+          } else {
+            throw new Error('音频下载失败');
           }
-        } catch {
-          await playAudioOrFallback(msg.audioUrl, msg.asrText);
+        } catch (err) {
+          throw err;
         }
       } else if (msg.asrText) {
         // 3) 纯文字微聊消息：实时调用豆包 TTS 合成播放（不存音频）
@@ -98,9 +114,11 @@ export const WeChatVoicePage: React.FC = () => {
         await playAudioOrFallback(tts.audioDataUrl, msg.asrText);
       }
 
-      if (msg.status === 'unread') {
-        markMessagePlayed(msg.id);
+      if (msg.status === 'unread' && msg.direction === 'device_to_parent') {
+        await markMessagePlayed(msg.id);
       }
+    } catch {
+      Toast.show({ content: '播放或同步失败，请重试' });
     } finally {
       setPlayingId('');
     }
@@ -137,7 +155,8 @@ export const WeChatVoicePage: React.FC = () => {
 
     const { blob, base64, url } = await recorder.stop();
     const content = textInput.trim() || `（${duration}秒原声语音）`;
-    sendParentVoiceMessage({
+    try {
+    await sendParentVoiceMessage({
       senderName: senderRole,
       asrText: content,
       durationSec: duration,
@@ -151,20 +170,22 @@ export const WeChatVoicePage: React.FC = () => {
     setTextInput('');
     Toast.show({
       icon: 'success',
-      content: autoPlayOnDevice
-        ? 'WAV 原声已上传，设备端将直接外放播报'
-        : 'WAV 原声已上传，设备端亮起未读红点等待宝贝点击',
+      content: 'WAV 原声已上传，等待设备同步',
     });
+    } catch {
+      Toast.show({ content: '发送失败，请重试' });
+    }
   };
 
-  const handleQuickTextVoiceSend = (e: React.FormEvent) => {
+  const handleQuickTextVoiceSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim()) {
       Toast.show({ content: '请输入要转成语音发给宝贝的话' });
       return;
     }
     const duration = Math.max(2, Math.min(15, Math.ceil(textInput.trim().length / 4)));
-    sendParentVoiceMessage({
+    try {
+    await sendParentVoiceMessage({
       senderName: senderRole,
       asrText: textInput.trim(),
       durationSec: duration,
@@ -173,8 +194,11 @@ export const WeChatVoicePage: React.FC = () => {
     setTextInput('');
     Toast.show({
       icon: 'success',
-      content: autoPlayOnDevice ? '已推送至设备并直接播报' : '已推送至设备微聊列表',
+      content: '已发送，等待设备同步',
     });
+    } catch {
+      Toast.show({ content: '发送失败，请重试' });
+    }
   };
 
   return (

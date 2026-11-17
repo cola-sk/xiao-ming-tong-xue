@@ -5,7 +5,6 @@ import {
   toggleVoiceSchedule,
   deleteVoiceScheduleById,
 } from '@/server/appDataStore';
-import { notifyDeviceSchedulesChanged } from '@/server/emqxPublisher';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,7 +68,6 @@ export async function POST(request: NextRequest) {
       repeatPlayCount: Number(body.repeatPlayCount ?? 2),
     });
 
-    await notifyDeviceSchedulesChanged(schedule.deviceId);
     return NextResponse.json({
       status: 'ok',
       schedule,
@@ -93,9 +91,6 @@ export async function PATCH(request: NextRequest) {
       id,
       typeof body.enabled === 'boolean' ? body.enabled : undefined
     );
-    if (updated) {
-      await notifyDeviceSchedulesChanged(updated.deviceId);
-    }
     return NextResponse.json({ status: 'ok', schedule: updated });
   } catch (err) {
     return NextResponse.json(
@@ -112,7 +107,7 @@ export async function DELETE(request: NextRequest) {
   }
   try {
     await deleteVoiceScheduleById(id);
-    await notifyDeviceSchedulesChanged('default');
+
     return NextResponse.json({ status: 'ok', deletedId: id });
   } catch (err) {
     return NextResponse.json(

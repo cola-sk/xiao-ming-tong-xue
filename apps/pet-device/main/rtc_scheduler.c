@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
+#include "pet_http_auth.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "wifi_manager.h"
@@ -58,8 +59,10 @@ static esp_err_t prefetch_alarm_audio(const char *audio_url, const char *audio_m
         .method = HTTP_METHOD_GET,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, full_url);
     esp_err_t err = esp_http_client_open(client, 0);
     if (err == ESP_OK) {
         int content_len = esp_http_client_fetch_headers(client);
@@ -158,16 +161,25 @@ esp_err_t rtc_scheduler_fetch_and_sync(void) {
         .method = HTTP_METHOD_GET,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true,
         .event_handler = sched_http_event_handler,
         .user_data = &ctx,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    pet_http_add_auth(client, url);
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK && esp_http_client_get_status_code(client) == 200 && ctx.len > 0) {
-        rtc_scheduler_sync_from_json(ctx.buf);
+        cJSON *root = cJSON_Parse(ctx.buf);
+        if (!root || !cJSON_IsArray(cJSON_GetObjectItem(root, "schedules"))) {
+            err = ESP_FAIL;
+        } else {
+            rtc_scheduler_sync_from_json(ctx.buf);
+        }
+        cJSON_Delete(root);
     } else {
         ESP_LOGW(TAG, "Schedule sync HTTP err=%s", esp_err_to_name(err));
+        err = ESP_FAIL;
     }
 
     esp_http_client_cleanup(client);

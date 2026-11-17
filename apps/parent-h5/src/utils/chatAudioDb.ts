@@ -70,7 +70,7 @@ async function pruneIfExceedsQuota(db: IDBDatabase): Promise<void> {
 /**
  * 保存微聊语音 Blob 到家长端本地 IndexedDB
  */
-export async function saveLocalChatAudio(msgId: string, blob: Blob): Promise<void> {
+export async function saveLocalChatAudio(msgId: string, blob: Blob, required = false): Promise<void> {
   if (!msgId || !blob || blob.size === 0) return;
   try {
     const db = await openAudioDb();
@@ -88,7 +88,8 @@ export async function saveLocalChatAudio(msgId: string, blob: Blob): Promise<voi
     });
     await pruneIfExceedsQuota(db);
     db.close();
-  } catch {
+  } catch (err) {
+    if (required) throw err;
     // 隐私模式或不支持 IndexedDB 时静默跳过
   }
 }
