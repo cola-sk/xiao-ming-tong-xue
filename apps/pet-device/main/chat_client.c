@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -11,6 +12,7 @@
 #include "audio_engine.h"
 #include "device_sync.h"
 #include "ui_state_machine.h"
+#include "chat_storage.h"
 
 static const char *TAG = "chat_client";
 
@@ -49,7 +51,14 @@ static esp_err_t chat_http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-static esp_err_t download_and_play_chat_audio(const char *audio_url) {
+static esp_err_t download_and_play_chat_audio(const char *msg_id, const char *audio_url) {
+    char local_path[96];
+    if (chat_storage_get_path(msg_id, local_path, sizeof(local_path))) {
+        ESP_LOGI(TAG, "Playing cached local parent WAV: %s", local_path);
+        audio_engine_play_local_file(local_path);
+        return ESP_OK;
+    }
+
     char full_url[256];
     if (strncmp(audio_url, "http", 4) == 0) {
         snprintf(full_url, sizeof(full_url), "%s", audio_url);
@@ -70,9 +79,24 @@ static esp_err_t download_and_play_chat_audio(const char *audio_url) {
         int content_len = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "Downloaded parent WAV stream -> HTTP %d, bytes=%d", status, content_len);
-        if (status == 200) {
-            // Stream bytes to ES8311 I2S DMA playback buffer
-            audio_engine_play_local_file("/ram/parent_wechat.wav");
+        if (status == 200 && content_len > 0 && content_len <= 512 * 1024) {
+            uint8_t *wav_buf = malloc((size_t)content_len);
+            if (wav_buf) {
+                int total_read = 0;
+                while (total_read < content_len) {
+                    int r = esp_http_client_read(client, (char *)wav_buf + total_read,
+                                                 content_len - total_read);
+                    if (r <= 0) break;
+                    total_read += r;
+                }
+                if (total_read > 0) {
+                    chat_storage_save(msg_id, wav_buf, (size_t)total_read);
+                    if (chat_storage_get_path(msg_id, local_path, sizeof(local_path))) {
+                        audio_engine_play_local_file(local_path);
+                    }
+                }
+                free(wav_buf);
+            }
         }
     }
     esp_http_client_close(client);
@@ -226,7 +250,7 @@ esp_err_t chat_client_play_next_unread(void) {
 
     ESP_LOGI(TAG, "Playing parent message [%s]: %s", s_pending_msg.id, s_pending_msg.text);
     if (strlen(s_pending_msg.audio_url) > 0) {
-        download_and_play_chat_audio(s_pending_msg.audio_url);
+        download_and_play_chat_audio(s_pending_msg.id, s_pending_msg.audio_url);
     } else {
         synthesize_and_play_text(s_pending_msg.text);
     }
@@ -240,7 +264,11 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
                                            const char *asr_text, int duration_sec) {
     if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
 
+    char local_msg_id[48];
+    snprintf(local_msg_id, sizeof(local_msg_id), "msg_dev_%lld", (long long)time(NULL));
+
     cJSON *body = cJSON_CreateObject();
+    cJSON_AddStringToObject(body, "id", local_msg_id);
     cJSON_AddStringToObject(body, "deviceId", wifi_manager_get_device_id());
     cJSON_AddStringToObject(body, "direction", "device_to_parent");
     cJSON_AddStringToObject(body, "senderName", "宝贝");
@@ -250,6 +278,7 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
     cJSON_AddBoolToObject(body, "autoPlay", false);
 
     if (wav_data && wav_len > 0) {
+        chat_storage_save(local_msg_id, wav_data, wav_len);
         size_t b64_max_len = ((wav_len + 2) / 3) * 4 + 4;
         char *b64_buf = malloc(b64_max_len);
         if (b64_buf) {

@@ -11,6 +11,7 @@ import {
   VoiceCloneProfile,
   PET_PERSONAS,
 } from '../services/types';
+import { saveLocalChatAudio } from '../utils/chatAudioDb';
 
 const INITIAL_FAMILY: Family = {
   id: 'fam-001',
@@ -83,9 +84,10 @@ interface AppState {
     durationSec: number;
     autoPlay: boolean;
     audioUrl?: string;
+    audioBlob?: Blob;
     audioBase64?: string;
     audioMime?: string;
-  }) => void;
+  }) => string;
   markMessagePlayed: (msgId: string) => void;
   syncMessagesFromServer: () => Promise<void>;
 
@@ -176,6 +178,7 @@ export const useAppStore = create<AppState>()(
         durationSec,
         autoPlay,
         audioUrl,
+        audioBlob,
         audioBase64,
         audioMime,
       }) => {
@@ -199,6 +202,9 @@ export const useAppStore = create<AppState>()(
           createdAt: new Date().toISOString(),
         };
         set(s => ({ messages: [...s.messages, newMsg] }));
+        if (audioBlob) {
+          void saveLocalChatAudio(id, audioBlob);
+        }
         fetch('/api/v1/chat/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -214,6 +220,7 @@ export const useAppStore = create<AppState>()(
             audioMime,
           }),
         }).catch(() => {});
+        return id;
       },
 
       markMessagePlayed: msgId => {

@@ -7,6 +7,7 @@ idf_component_register(
         "wifi_manager.c"
         "device_sync.c"
         "chat_client.c"
+        "chat_storage.c"
     INCLUDE_DIRS "."
     REQUIRES
         driver

@@ -7,6 +7,12 @@ import { ChatVoiceMessage } from '../../services/types';
 import { IconMic, IconVolume, IconBattery, IconWifi } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 import { startWavRecorder, WavRecorderHandle } from '../../utils/wavRecorder';
+import {
+  saveLocalChatAudio,
+  getLocalChatAudioUrl,
+  getLocalChatAudioStats,
+  clearLocalChatAudio,
+} from '../../utils/chatAudioDb';
 
 export const WeChatVoicePage: React.FC = () => {
   const {
@@ -37,6 +43,18 @@ export const WeChatVoicePage: React.FC = () => {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [textInput, setTextInput] = useState('');
   const [senderRole, setSenderRole] = useState<'妈妈' | '爸爸'>('妈妈');
+  const [localCacheStats, setLocalCacheStats] = useState<{ count: number; totalBytes: number }>({
+    count: 0,
+    totalBytes: 0,
+  });
+
+  const refreshLocalStats = () => {
+    void getLocalChatAudioStats().then(setLocalCacheStats);
+  };
+
+  useEffect(() => {
+    refreshLocalStats();
+  }, [messages.length]);
 
   const timerRef = useRef<number | null>(null);
   const wavRecorderRef = useRef<WavRecorderHandle | null>(null);
@@ -45,10 +63,33 @@ export const WeChatVoicePage: React.FC = () => {
     if (playingId) return;
     setPlayingId(msg.id);
     try {
-      if (msg.audioUrl) {
-        await playAudioOrFallback(msg.audioUrl, msg.asrText);
+      // 1) 优先从家长端本地 IndexedDB 读取已缓存的双向原声录音
+      const localUrl = await getLocalChatAudioUrl(msg.id);
+      if (localUrl) {
+        await playAudioOrFallback(localUrl, msg.asrText);
+      } else if (msg.audioUrl) {
+        // 2) 若在云端中转队列中：先拉取 WAV 存入本地 IndexedDB，再播放并标记已读以释放云端中转
+        try {
+          const resp = await fetch(msg.audioUrl);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            await saveLocalChatAudio(msg.id, blob);
+            refreshLocalStats();
+            const objUrl = URL.createObjectURL(blob);
+            await playAudioOrFallback(objUrl, msg.asrText);
+          } else if (msg.asrText) {
+            const tts = await requestDoubaoTtsAudio({
+              text: msg.asrText,
+              voiceType: petConfig.voiceId,
+              persist: false,
+            });
+            await playAudioOrFallback(tts.audioDataUrl, msg.asrText);
+          }
+        } catch {
+          await playAudioOrFallback(msg.audioUrl, msg.asrText);
+        }
       } else if (msg.asrText) {
-        // 纯文字消息或已阅后清理音频的消息，点击时按实时 TTS 试听
+        // 3) 纯文字微聊消息：实时调用豆包 TTS 合成播放（不存音频）
         const tts = await requestDoubaoTtsAudio({
           text: msg.asrText,
           voiceType: petConfig.voiceId,
@@ -56,6 +97,7 @@ export const WeChatVoicePage: React.FC = () => {
         });
         await playAudioOrFallback(tts.audioDataUrl, msg.asrText);
       }
+
       if (msg.status === 'unread') {
         markMessagePlayed(msg.id);
       }
@@ -93,7 +135,7 @@ export const WeChatVoicePage: React.FC = () => {
     wavRecorderRef.current = null;
     if (!recorder) return;
 
-    const { base64, url } = await recorder.stop();
+    const { blob, base64, url } = await recorder.stop();
     const content = textInput.trim() || `（${duration}秒原声语音）`;
     sendParentVoiceMessage({
       senderName: senderRole,
@@ -101,9 +143,11 @@ export const WeChatVoicePage: React.FC = () => {
       durationSec: duration,
       autoPlay: autoPlayOnDevice,
       audioUrl: url,
+      audioBlob: blob,
       audioBase64: base64,
       audioMime: 'audio/wav',
     });
+    refreshLocalStats();
     setTextInput('');
     Toast.show({
       icon: 'success',
@@ -195,9 +239,27 @@ export const WeChatVoicePage: React.FC = () => {
 
       {/* 微信式语音气泡流 */}
       <section className="space-y-2.5">
-        <div className="flex items-center justify-between px-0.5">
+        <div className="flex items-center justify-between px-0.5 gap-2">
           <h3 className="approval-section-title">亲子双向微聊</h3>
-          <span className="text-[11px] text-[#929187]">点击气泡播放语音 · 自动附带 ASR 转文字</span>
+          <div className="flex items-center gap-2 text-[10px] text-[#929187]">
+            <span>
+              本地语音缓存 {localCacheStats.count} 条 (
+              {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
+            </span>
+            {localCacheStats.count > 0 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await clearLocalChatAudio();
+                  refreshLocalStats();
+                  Toast.show({ content: '已清理浏览器本地微聊语音缓存' });
+                }}
+                className="text-[#B96043] underline"
+              >
+                清理
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="space-y-3">

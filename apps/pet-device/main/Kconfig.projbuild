@@ -25,4 +25,27 @@ menu "AI Chat Pet (小铭同学) Configuration"
         help
             Interval in seconds between HTTPS heartbeat sync requests to /api/v1/device/sync.
 
+    menu "Local WeChat Voice Cache Policy"
+        config PET_WECHAT_MAX_BYTES_KB
+            int "Max WeChat Cache Size (KB)"
+            range 512 131072
+            default 4096
+            help
+                Total storage quota in KB for local WeChat voice cache (4096 KB = 4 MB for Flash, increase e.g. 131072 KB = 128 MB when TF card is inserted).
+
+        config PET_WECHAT_MAX_COUNT
+            int "Max WeChat Cached Messages"
+            range 5 500
+            default 20
+            help
+                Maximum number of WeChat voice files kept locally before oldest messages are evicted (20 for Flash, up to 200+ for TF card).
+
+        config PET_WECHAT_MAX_AGE_DAYS
+            int "Max WeChat Retention Days"
+            range 1 90
+            default 7
+            help
+                Maximum retention days for cached WeChat voice files before auto-cleanup.
+    endmenu
+
 endmenu
