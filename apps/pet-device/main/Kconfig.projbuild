@@ -20,10 +20,39 @@ menu "AI Chat Pet (小铭同学) Configuration"
 
     config PET_HEARTBEAT_INTERVAL_SEC
         int "Device Heartbeat Interval (seconds)"
-        range 5 60
-        default 15
+        range 5 120
+        default 30
         help
-            Interval in seconds between HTTPS heartbeat sync requests to /api/v1/device/sync.
+            Interval in seconds between HTTPS heartbeat sync requests to /api/v1/device/sync. (Can be 30-60s when MQTT is enabled).
+
+    menu "EMQX Cloud Serverless MQTT (Real-time Wakeup < 0.3s)"
+        config PET_MQTT_ENABLE
+            bool "Enable EMQX Serverless MQTT over TLS (Port 8883)"
+            default y
+            help
+                Connect to EMQX Cloud Serverless over TLS 8883 for instant push wakeup.
+
+        config PET_MQTT_BROKER_URI
+            string "EMQX Broker TLS URI"
+            depends on PET_MQTT_ENABLE
+            default "mqtts://your-deployment.emqxsl.com:8883"
+            help
+                EMQX Cloud Serverless TLS endpoint URI (mqtts://<host>:8883).
+
+        config PET_MQTT_USERNAME
+            string "EMQX Client Username"
+            depends on PET_MQTT_ENABLE
+            default "esp32_pet"
+            help
+                Client authentication username created in EMQX Cloud Console -> Authentication.
+
+        config PET_MQTT_PASSWORD
+            string "EMQX Client Password"
+            depends on PET_MQTT_ENABLE
+            default "your_password"
+            help
+                Client authentication password created in EMQX Cloud Console -> Authentication.
+    endmenu
 
     menu "Local WeChat Voice Cache Policy"
         config PET_WECHAT_MAX_BYTES_KB

@@ -8,49 +8,69 @@
 
 ## 一、系统总体技术架构
 
-系统采用 **「双端（家长 H5 + ESP32-S3 硬件） ↔ Vercel Serverless API ↔ Neon PostgreSQL + 火山引擎 AI」** 的四层清晰架构：
+系统由 **家长 H5、ESP32-S3 固件、Vercel Serverless API、Neon PostgreSQL 和火山引擎 AI 服务**组成。下图按业务入口展开，箭头表示主要请求及数据去向；设备端尚未完成的部分见图后的说明。
 
 ```mermaid
 flowchart LR
-    subgraph Devices["1. 终端交互与本地语音存储层"]
+    subgraph Clients["终端"]
         direction TB
-        H5["📱 家长端 H5 (Next.js PWA)\n· 24kHz WAV 录音 & 双向微聊\n· IndexedDB 本地语音库 (200条/100MB)"]
-        ESP["🤖 硬件终端 (ESP32-S3 ESP-IDF)\n· CO5300 480×480 双页 UI & GPIO0 盲操\n· Flash/TF 本地语音库 (体积+条数+天数FIFO)"]
+        H5["家长端 H5 · Next.js PWA<br/>微聊 / 日程 / 人设 / 声音复刻"]
+        IDB[("IndexedDB<br/>本地微聊音频")]
+        ESP["ESP32-S3 · ESP-IDF<br/>交互 / 心跳 / 消息 / 本地调度"]
+        Local[("设备本地存储<br/>微聊 WAV / 日程音频（规划）")]
+        H5 --- IDB
+        ESP --- Local
     end
 
-    subgraph Gateway["2. 云端 API 网关 (Vercel Serverless · /api/v1/*)"]
+    subgraph API["Vercel · Next.js Serverless API /api/v1"]
         direction TB
-        GW_Dev["设备网关\n/device/sync · /device/status"]
-        GW_Chat["微聊与伴聊网关\n/chat/messages · /ai/chat · /pet-ai"]
-        GW_Audio["语音与日程网关\n/schedules · /tts · /voice-clone · /audio/[md5]"]
+        Sync["设备同步<br/>device/sync · device/status"]
+        Chat["亲子微聊<br/>chat/messages · 消息音频"]
+        Pet["AI 伴聊与人设<br/>ai/chat · pet-ai"]
+        Schedule["定时任务<br/>schedules · audio/[md5]"]
+        Voice["语音服务<br/>tts · voice-clone"]
     end
 
-    subgraph Storage["3. 数据与缓存层 (Neon PostgreSQL)"]
+    subgraph Data["Neon PostgreSQL"]
         direction TB
-        DB_Meta["业务元数据与状态\ndevices · pet_ai_configs · voice_schedules\nvoice_clone_profiles · ai_chat_logs"]
-        DB_Chat["微聊阅后即焚中转队列\nchat_voice_messages\n(仅未读期间暂存音频，已读即置 NULL)"]
-        DB_Audio["定时播报永久音频库\ntts_audio_files\n(按 MD5 去重，CDN 永久缓存)"]
+        Meta[("设备 / 人设 / 日程<br/>复刻档案 / 问答文本")]
+        Queue[("chat_voice_messages<br/>未读音频临时中转<br/>已读后清空音频")]
+        Audio[("tts_audio_files<br/>定时 MP3 · MD5 去重")]
     end
 
-    subgraph AI["4. 火山引擎 AI 引擎"]
+    subgraph External["火山引擎"]
         direction TB
-        Ark["火山方舟大模型\ndoubao-seed-2-0-mini-260428"]
-        Speech["豆包语音 V3 (X-Api-Key)\nseed-tts-2.0 · seed-icl-2.0 声音复刻"]
+        Ark["火山方舟 LLM<br/>文本问答"]
+        Speech["豆包语音 V3<br/>TTS · 声音复刻"]
     end
 
-    H5 <-->|"HTTPS (10s 状态同步 / WAV 上传)"| Gateway
-    ESP <-->|"HTTPS TLS (15s 心跳 / WAV 收发 / MP3 拉取)"| Gateway
+    H5 -->|"HTTPS · 管理与轮询"| Sync & Chat & Pet & Schedule & Voice
+    ESP -->|"HTTPS · 心跳与事件"| Sync
+    ESP -->|"HTTPS · 微聊收发"| Chat
+    ESP -->|"HTTPS · 文本提问"| Pet
+    ESP -->|"HTTPS · 日程与音频拉取"| Schedule
+    ESP -->|"HTTPS · 文本消息 TTS"| Voice
 
-    GW_Dev <--> DB_Meta
-    GW_Chat <--> DB_Chat
-    GW_Chat <--> DB_Meta
-    GW_Audio <--> DB_Audio
-    GW_Audio <--> DB_Meta
-
-    GW_Chat <--> Ark
-    GW_Chat <--> Speech
-    GW_Audio <--> Speech
+    Sync <--> Meta
+    Sync -->|"未读数"| Queue
+    Chat <--> Queue
+    Pet <--> Meta
+    Schedule <--> Meta
+    Schedule -->|"读取 MP3"| Audio
+    Voice -->|"持久化定时 MP3"| Audio
+    Voice <--> Meta
+    Pet -->|"人设 + 问题"| Ark
+    Pet -->|"回复文本合成 MP3"| Speech
+    Voice -->|"文字合成 / 样本上传"| Speech
 ```
+
+三条主要业务链路：
+
+1. **亲子微聊**：H5 与设备通过消息 API 收发语音；Neon 暂存未读音频，接收端保存并确认后清除云端音频。
+2. **AI 伴聊**：设备向 `ai/chat` 发送文本问题，服务端读取人设、调用方舟生成回复，再调用豆包语音合成；问答文本存库，回复音频不持久化。
+3. **定时播报**：H5 调用 `tts` 生成并持久化音频，再保存日程；设备通过心跳检查日程数量、拉取任务及音频，计划在本地定时播放并上报确认。
+
+> **实现状态**：上图展示当前方案及已有 API 链路，并非设备端功能均已跑通。固件的录音、播放和界面硬件驱动目前主要为占位实现；AI 接口接收文本，语音识别尚未接入。日程音频下载尚未落盘，PCF85063 硬件 RTC 及离线唤醒尚未接入；当前使用系统时间轮询，且仅在启用日程数量变化时重新拉取。设备文件系统挂载及重启后的缓存索引恢复也有待实现。下文设备交互、离线播报及音频存储的描述为目标方案，需以代码实现状态为准。
 
 ### 通信协议选型说明
 

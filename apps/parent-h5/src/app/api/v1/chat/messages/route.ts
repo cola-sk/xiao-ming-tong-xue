@@ -4,6 +4,7 @@ import {
   createChatMessage,
   markChatMessagePlayed,
 } from '@/server/appDataStore';
+import { notifyDeviceNewVoice, notifyParentEvent } from '@/server/emqxPublisher';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +78,21 @@ export async function POST(request: NextRequest) {
       audioBase64,
       audioMime,
     });
+
+    // 通过 EMQX Cloud Serverless HTTP API 毫秒级通知对端拉取新语音
+    if (direction === 'parent_to_device') {
+      await notifyDeviceNewVoice(deviceId, {
+        msgId: message.id,
+        senderName: message.senderName,
+        autoPlay: message.autoPlay,
+      });
+    } else {
+      await notifyParentEvent(deviceId, 'new_child_voice', {
+        msgId: message.id,
+        senderName: message.senderName,
+      });
+    }
+
     return NextResponse.json({
       status: 'ok',
       message,

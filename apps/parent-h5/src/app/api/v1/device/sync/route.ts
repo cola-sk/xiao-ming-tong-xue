@@ -7,6 +7,7 @@ import {
   listVoiceSchedules,
   getPetAiConfig,
 } from '@/server/appDataStore';
+import { notifyParentEvent } from '@/server/emqxPublisher';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,11 +40,13 @@ export async function POST(request: NextRequest) {
       wifiRssi: typeof body.wifiRssi === 'number' ? body.wifiRssi : undefined,
     });
 
-    // 2) 若携带业务确认事件，同步落库
+    // 2) 若携带业务确认事件，同步落库并通过 EMQX 通知家长端即时刷新
     if (event === 'alarm_ack' && body.taskId) {
       await ackVoiceSchedule(String(body.taskId));
+      await notifyParentEvent(deviceId, 'alarm_ack', { taskId: String(body.taskId) });
     } else if (event === 'voice_read' && body.msgId) {
       await markChatMessagePlayed(String(body.msgId));
+      await notifyParentEvent(deviceId, 'voice_read', { msgId: String(body.msgId) });
     }
 
     // 3) 查询待下行同步的任务与未读消息摘要

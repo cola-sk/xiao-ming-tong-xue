@@ -5,6 +5,7 @@ import {
   updateDeviceVolume,
   deleteDeviceById,
 } from '@/server/deviceStore';
+import { notifyDeviceConfigChanged } from '@/server/emqxPublisher';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: '缺少 deviceId 或 volumeLevel' }, { status: 400 });
       }
       const updated = await updateDeviceVolume(deviceId, volumeLevel);
+      await notifyDeviceConfigChanged(deviceId, updated?.volumeLevel ?? volumeLevel);
       return NextResponse.json({ status: 'ok', device: updated });
     }
 

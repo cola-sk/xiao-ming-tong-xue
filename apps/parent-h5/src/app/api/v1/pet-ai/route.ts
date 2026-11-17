@@ -4,6 +4,7 @@ import {
   upsertPetAiConfig,
   listAiChatLogs,
 } from '@/server/appDataStore';
+import { notifyDeviceConfigChanged } from '@/server/emqxPublisher';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ export async function PATCH(request: NextRequest) {
       customPrompt: typeof body.customPrompt === 'string' ? body.customPrompt : undefined,
       volumeLevel: typeof body.volumeLevel === 'number' ? body.volumeLevel : undefined,
     });
+    await notifyDeviceConfigChanged(deviceId, updated.volumeLevel);
     return NextResponse.json({
       status: 'ok',
       config: updated,

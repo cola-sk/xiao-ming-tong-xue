@@ -6,6 +6,7 @@
 #include "wifi_manager.h"
 #include "device_sync.h"
 #include "chat_storage.h"
+#include "mqtt_client_mgr.h"
 
 static const char *TAG = "ai_chat_pet_main";
 
@@ -18,4 +19,5 @@ void app_main(void) {
     rtc_scheduler_init();
     ui_state_init();
     ESP_ERROR_CHECK(device_sync_start());
+    ESP_ERROR_CHECK(mqtt_client_mgr_start());
 }
