@@ -1,5 +1,5 @@
 import 'server-only';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { findExistingAudioByText, saveSynthesizedAudio } from './audioStore';
 
 const VOLC_SPEECH_HOST = 'https://openspeech.bytedance.com';
@@ -31,96 +31,48 @@ export function isDoubaoConfigured(): boolean {
   return Boolean(getDoubaoConfig().apiKey);
 }
 
-/**
- * 1. 豆包声音复刻：使用 `X-Api-Key` 上传爸爸/妈妈音频样本并训练绑定 `speaker_id`
- */
+/** Voice clone V3 requires a speaker ID provisioned in the Volcengine console. */
+async function callVoiceCloneV3(path: string, body: Record<string, unknown>) {
+  const apiKey = getDoubaoConfig().apiKey;
+  if (!apiKey) throw new Error('未配置豆包语音 API Key');
+  const response = await fetch(`${VOLC_SPEECH_HOST}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Api-Key': apiKey,
+      'X-Api-Request-Id': randomUUID(),
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(60000),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || (typeof data.code === 'number' && data.code !== 0 && data.code !== 20000000)) {
+    const logId = response.headers.get('X-Tt-Logid');
+    throw new Error(`${data?.message || `火山引擎请求失败 (HTTP ${response.status})`}${logId ? ` (日志 ID: ${logId})` : ''}`);
+  }
+  return data;
+}
+
 export async function uploadDoubaoVoiceClone(params: {
   speakerId: string;
   audioBase64: string;
-  audioFormat?: 'wav' | 'mp3';
-  modelType?: number;
+  audioFormat: 'wav' | 'mp3';
 }) {
-  const cfg = getDoubaoConfig();
-  if (!cfg.apiKey) {
-    throw new Error('未配置豆包语音 DOUBAO_SPEECH_API_KEY');
-  }
-
-  const response = await fetch(`${VOLC_SPEECH_HOST}/api/v1/mega_tts/audio/upload`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Api-Key': cfg.apiKey,
-      'X-Api-Resource-Id': cfg.cloneUploadResourceId,
-      'Resource-Id': cfg.cloneUploadResourceId,
-    },
-    body: JSON.stringify({
-      speaker_id: params.speakerId,
-      audios: [
-        {
-          audio_bytes: params.audioBase64,
-          audio_format: params.audioFormat || 'wav',
-        },
-      ],
-      source: 2,
-      language: 0,
-      model_type: params.modelType ?? 1,
-    }),
-    cache: 'no-store',
+  const data = await callVoiceCloneV3('/api/v3/tts/voice_clone', {
+    speaker_id: params.speakerId,
+    audio: { data: params.audioBase64, format: params.audioFormat },
+    language: 0,
   });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || (data.BaseResp && data.BaseResp.StatusCode !== 0)) {
-    const errMsg =
-      data?.BaseResp?.StatusMessage ||
-      data?.message ||
-      `豆包声音复刻上传失败 (HTTP ${response.status})`;
-    throw new Error(errMsg);
-  }
-
-  return {
-    speakerId: data.speaker_id || params.speakerId,
-    status: data.status ?? 1,
-    raw: data,
-  };
+  return { speakerId: data.speaker_id || params.speakerId, status: data.status as number | undefined };
 }
 
-/**
- * 2. 查询豆包声音复刻状态（使用 `X-Api-Key`）
- */
 export async function getDoubaoVoiceCloneStatus(speakerId: string) {
-  const cfg = getDoubaoConfig();
-  if (!cfg.apiKey) {
-    throw new Error('未配置豆包语音 DOUBAO_SPEECH_API_KEY');
+  const data = await callVoiceCloneV3('/api/v3/tts/get_voice', { speaker_id: speakerId });
+  if (typeof data.status !== 'number' || ![0, 1, 2, 3, 4].includes(data.status)) {
+    throw new Error('火山引擎未返回有效的音色状态，请稍后重试');
   }
-
-  const response = await fetch(`${VOLC_SPEECH_HOST}/api/v1/mega_tts/status`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Api-Key': cfg.apiKey,
-      'X-Api-Resource-Id': cfg.cloneUploadResourceId,
-      'Resource-Id': cfg.cloneUploadResourceId,
-    },
-    body: JSON.stringify({
-      speaker_id: speakerId,
-    }),
-    cache: 'no-store',
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || (data.BaseResp && data.BaseResp.StatusCode !== 0)) {
-    throw new Error(
-      data?.BaseResp?.StatusMessage || `查询豆包复刻状态失败 (HTTP ${response.status})`
-    );
-  }
-
-  return {
-    speakerId: data.speaker_id || speakerId,
-    status: data.status as number,
-    createTime: data.create_time,
-    demoAudio: data.demo_audio,
-    raw: data,
-  };
+  return { speakerId: data.speaker_id || speakerId, status: data.status as number };
 }
 
 /**
@@ -166,16 +118,17 @@ async function synthesizeViaV3Unidirectional(params: {
   const audioChunks: Buffer[] = [];
   const lines = rawText.split(/\r?\n/).filter(l => l.trim().length > 0);
   for (const line of lines) {
+    let packet: { code?: number; message?: string; data?: string };
     try {
-      const packet = JSON.parse(line);
-      if (packet.code && packet.code !== 0 && packet.code !== 20000000) {
-        throw new Error(packet.message || `豆包 V3 合成错误 (code: ${packet.code})`);
-      }
-      if (typeof packet.data === 'string' && packet.data.length > 0) {
-        audioChunks.push(Buffer.from(packet.data, 'base64'));
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.includes('豆包 V3')) throw e;
+      packet = JSON.parse(line);
+    } catch {
+      throw new Error('豆包 TTS 返回了无法解析的数据');
+    }
+    if (packet.code && packet.code !== 0 && packet.code !== 20000000) {
+      throw new Error(packet.message || `豆包 V3 合成错误 (code: ${packet.code})`);
+    }
+    if (typeof packet.data === 'string' && packet.data.length > 0) {
+      audioChunks.push(Buffer.from(packet.data, 'base64'));
     }
   }
 

@@ -38,7 +38,7 @@ export interface VoiceCloneProfileContract {
   sampleText: string;            // 克隆采样朗读标准文本
   sampleAudioUrl?: string;       // 家长录制的 5~15 秒声音样本 URL
   providerVoiceId: string;       // 云端克隆引擎返回的专属 Voice ID (如 CosyVoice / 火山引擎 / FishAudio)
-  status: 'ready' | 'training';
+  status: 'ready' | 'training' | 'failed' | 'unknown';
   createdAt: string;
 }
 

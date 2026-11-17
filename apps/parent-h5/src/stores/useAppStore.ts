@@ -72,9 +72,10 @@ interface AppState {
     title: string;
     sampleText: string;
     sampleAudioUrl?: string;
-    providerVoiceId?: string;
+    providerVoiceId: string;
+    status?: VoiceCloneProfile['status'];
   }) => VoiceCloneProfile;
-  deleteVoiceCloneProfile: (id: string) => void;
+  deleteVoiceCloneProfile: (id: string) => Promise<void>;
   syncVoiceClonesFromServer: () => Promise<void>;
 
   // Actions - 功能三：亲子双向微聊
@@ -92,8 +93,8 @@ interface AppState {
   syncMessagesFromServer: () => Promise<void>;
 
   // Actions - 功能二：定时语音播报
-  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>) => void;
-  updateSchedule: (id: string, updates: Partial<VoiceSchedule>) => void;
+  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>) => Promise<void>;
+  updateSchedule: (id: string, updates: Partial<VoiceSchedule>) => Promise<void>;
   toggleSchedule: (id: string) => void;
   deleteSchedule: (id: string) => void;
   syncSchedulesFromServer: () => Promise<void>;
@@ -122,7 +123,7 @@ export const useAppStore = create<AppState>()(
       petConfig: INITIAL_PET_CONFIG,
       aiLogs: INITIAL_AI_LOGS,
 
-      addVoiceCloneProfile: ({ id, speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId }) => {
+      addVoiceCloneProfile: ({ id, speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId, status }) => {
         const state = get();
         const profile: VoiceCloneProfile = {
           id: id || `clone_${Date.now()}`,
@@ -131,8 +132,8 @@ export const useAppStore = create<AppState>()(
           title: title.trim() || `${speakerRole}的克隆声音`,
           sampleText,
           sampleAudioUrl,
-          providerVoiceId: providerVoiceId || `S_${speakerRole === '爸爸' ? 'dad' : 'mom'}_${Date.now()}`,
-          status: 'ready',
+          providerVoiceId,
+          status: status || 'training',
           createdAt: new Date().toISOString(),
         };
         set(s => ({
@@ -141,11 +142,10 @@ export const useAppStore = create<AppState>()(
         return profile;
       },
 
-      deleteVoiceCloneProfile: id => {
+      deleteVoiceCloneProfile: async id => {
+        const response = await fetch(`/api/v1/voice-clone?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('删除失败，请重试');
         set(s => ({ voiceClones: s.voiceClones.filter(v => v.id !== id) }));
-        fetch(`/api/v1/voice-clone?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
-          () => {}
-        );
       },
 
       syncVoiceClonesFromServer: async () => {
@@ -162,7 +162,7 @@ export const useAppStore = create<AppState>()(
                 title: p.title,
                 sampleText: p.sampleText || '',
                 providerVoiceId: p.providerVoiceId,
-                status: p.status || 'ready',
+                status: ['ready', 'training', 'failed', 'unknown'].includes(p.status) ? p.status : 'unknown',
                 createdAt: p.createdAt,
               })),
             }));
@@ -267,9 +267,9 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      addSchedule: draft => {
+      addSchedule: async draft => {
         const state = get();
-        const id = `sched_${Date.now()}`;
+        const id = `sched_${crypto.randomUUID()}`;
         const deviceId = state.selectedDeviceId || 'default';
         const newSched: VoiceSchedule = {
           ...draft,
@@ -281,32 +281,24 @@ export const useAppStore = create<AppState>()(
           lastAckAt: null,
           createdAt: new Date().toISOString(),
         };
-        set(s => ({ schedules: [newSched, ...s.schedules] }));
-        fetch('/api/v1/schedules', {
+        const response = await fetch('/api/v1/schedules', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newSched),
-        }).catch(() => {});
+        });
+        if (!response.ok) throw new Error('保存定时任务失败');
+        set(s => ({ schedules: [newSched, ...s.schedules] }));
       },
 
-      updateSchedule: (id, updates) => {
-        let merged: VoiceSchedule | undefined;
-        set(s => ({
-          schedules: s.schedules.map(item => {
-            if (item.id === id) {
-              merged = { ...item, ...updates, updatedAt: new Date().toISOString() };
-              return merged;
-            }
-            return item;
-          }),
-        }));
-        if (merged) {
-          fetch('/api/v1/schedules', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(merged),
-          }).catch(() => {});
-        }
+      updateSchedule: async (id, updates) => {
+        const existing = get().schedules.find(item => item.id === id);
+        if (!existing) throw new Error('定时任务不存在');
+        const merged = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+        const response = await fetch('/api/v1/schedules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
+        });
+        if (!response.ok) throw new Error('保存定时任务失败');
+        set(s => ({ schedules: s.schedules.map(item => item.id === id ? merged : item) }));
       },
 
       toggleSchedule: id => {

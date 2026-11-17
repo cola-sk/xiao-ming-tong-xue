@@ -8,8 +8,8 @@ import { VoiceCloneProfile } from '../../services/types';
 import { IconMic, IconVolume, IconSparkle, IconCheck } from '../../components/Icons';
 import {
   playAudioOrFallback,
+  playAudioStrict,
   requestDoubaoTtsAudio,
-  speakBySourceType,
 } from '../../utils/voiceSynth';
 import { startWavRecorder, WavRecorderHandle } from '../../utils/wavRecorder';
 
@@ -40,6 +40,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
   const [recordSec, setRecordSec] = useState(0);
   const [recordedWavUrl, setRecordedWavUrl] = useState<string>('');
   const [recordedWavBase64, setRecordedWavBase64] = useState<string>('');
+  const [audioFormat, setAudioFormat] = useState<'wav' | 'mp3'>('wav');
   const [isCloning, setIsCloning] = useState(false);
   const [synthesizingId, setSynthesizingId] = useState<string>('');
   const [checkingId, setCheckingId] = useState<string>('');
@@ -58,6 +59,34 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       })
       .catch(() => setDoubaoConfigured(false));
   }, [visible, syncVoiceClonesFromServer]);
+
+  useEffect(() => {
+    if (!visible) return;
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      const recorder = wavRecorderRef.current;
+      wavRecorderRef.current = null;
+      if (recorder) void recorder.stop().then(result => URL.revokeObjectURL(result.url)).catch(() => {});
+      setIsRecording(false);
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const trainingIds = [...new Set(voiceClones.filter(v => v.status === 'training').map(v => v.providerVoiceId))];
+    if (trainingIds.length === 0) return;
+    let disposed = false;
+    const timer = window.setInterval(async () => {
+      const results = await Promise.allSettled(trainingIds.map(id =>
+        fetch(`/api/v1/voice-clone?speakerId=${encodeURIComponent(id)}`, { cache: 'no-store' })
+      ));
+      if (!disposed && results.some(result => result.status === 'fulfilled' && result.value.ok)) {
+        await syncVoiceClonesFromServer();
+      }
+    }, 15000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [visible, voiceClones, syncVoiceClonesFromServer]);
 
   const handleSelectRole = (role: '妈妈' | '爸爸') => {
     setSpeakerRole(role);
@@ -95,35 +124,51 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       wavRecorderRef.current = null;
       setRecordedWavUrl(url);
       setRecordedWavBase64(base64);
+      setAudioFormat('wav');
     }
   };
 
-  const handleUploadSampleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadSampleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : '';
-      if (base64) {
-        setRecordedWavUrl(URL.createObjectURL(file));
-        setRecordedWavBase64(base64);
-        setRecordSec(8);
-        Toast.show({ icon: 'success', content: `已载入音频文件：${file.name}` });
-      }
-    };
-    reader.readAsDataURL(file);
+    if (file.size === 0 || file.size > 3 * 1024 * 1024) {
+      Toast.show({ icon: 'fail', content: '音频文件需大于 0 且不超过 3 MB' });
+      return;
+    }
+    try {
+      const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+      const wav = bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WAVE';
+      const mp3 = bytes.length >= 3 && (String.fromCharCode(...bytes.slice(0, 3)) === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0));
+      if (!wav && !mp3) throw new Error('请选择有效的 WAV 或 MP3 文件');
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+        reader.onerror = () => reject(new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+      });
+      if (!base64) throw new Error('读取文件失败');
+      setRecordedWavUrl(URL.createObjectURL(file));
+      setRecordedWavBase64(base64);
+      setAudioFormat(wav ? 'wav' : 'mp3');
+      setRecordSec(0);
+      Toast.show({ icon: 'success', content: `已载入音频文件：${file.name}` });
+    } catch (err) {
+      Toast.show({ icon: 'fail', content: err instanceof Error ? err.message : '读取文件失败' });
+    }
   };
 
   const handleSubmitClone = async () => {
     if (!recordedWavBase64) {
-      Toast.show({ content: '请先录制或上传 5~15 秒的 WAV/MP3 声音样本' });
+      Toast.show({ content: '请先录制或上传 WAV/MP3 声音样本' });
       return;
     }
 
-    const resolvedSpeakerId =
-      speakerIdInput.trim() ||
-      `S_${speakerRole === '爸爸' ? 'dad' : 'mom'}_${Date.now().toString(36)}`;
+    const resolvedSpeakerId = speakerIdInput.trim();
+    if (!/^S_[a-zA-Z0-9_-]+$/.test(resolvedSpeakerId)) {
+      Toast.show({ content: '请填写火山引擎控制台已开通的 S_ 音色 ID' });
+      return;
+    }
 
     setIsCloning(true);
     try {
@@ -135,7 +180,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
           title,
           speakerId: resolvedSpeakerId,
           audioBase64: recordedWavBase64,
-          audioFormat: 'wav',
+          audioFormat,
           sampleText: SAMPLE_SCRIPTS[speakerRole],
         }),
       });
@@ -153,6 +198,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         sampleText: SAMPLE_SCRIPTS[speakerRole],
         sampleAudioUrl: recordedWavUrl,
         providerVoiceId: finalVoiceId,
+        status: data.profile?.status || 'training',
       });
       setRecordedWavUrl('');
       setRecordedWavBase64('');
@@ -161,6 +207,8 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         icon: 'success',
         content: `已上传至火山引擎豆包声音复刻（音色 ID: ${finalVoiceId}）！`,
       });
+    } catch {
+      Toast.show({ icon: 'fail', content: '连接失败，请先查询音色状态后再决定是否重试' });
     } finally {
       setIsCloning(false);
     }
@@ -184,10 +232,13 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         3: '训练失败 (3)',
         4: '已激活可用 (4)',
       };
+      await syncVoiceClonesFromServer();
       Toast.show({
         icon: data.status === 2 || data.status === 4 ? 'success' : undefined,
         content: `豆包音色 ${vc.providerVoiceId} 状态：${statusMap[data.status] || data.status}`,
       });
+    } catch {
+      Toast.show({ icon: 'fail', content: '查询失败，请检查网络后重试' });
     } finally {
       setCheckingId('');
     }
@@ -197,6 +248,13 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
     if (!testText.trim() || synthesizingId) return;
     setSynthesizingId(vc.id);
     try {
+      const statusRes = await fetch(`/api/v1/voice-clone?speakerId=${encodeURIComponent(vc.providerVoiceId)}`, { cache: 'no-store' });
+      const statusData = await statusRes.json();
+      await syncVoiceClonesFromServer();
+      if (!statusRes.ok || ![2, 4].includes(statusData.status)) {
+        Toast.show({ icon: 'fail', content: statusData.error || '音色尚未训练成功，请查询状态' });
+        return;
+      }
       const res = await requestDoubaoTtsAudio({
         text: testText.trim(),
         voiceType: vc.providerVoiceId,
@@ -204,15 +262,12 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       });
       if (res.ok && res.audioDataUrl) {
         Toast.show({ icon: 'success', content: '豆包克隆语音合成成功，正在播放真实音频' });
-        await playAudioOrFallback(res.audioDataUrl, testText.trim(), 'parent_clone', vc.speakerRole);
+        await playAudioStrict(res.audioDataUrl);
       } else {
-        Toast.show({
-          content: res.error
-            ? `${res.error}（已回退浏览器模拟试听）`
-            : '正在用浏览器模拟试听',
-        });
-        speakBySourceType(testText.trim(), 'parent_clone', vc.speakerRole);
+        Toast.show({ icon: 'fail', content: res.error || '合成失败，请稍后重试' });
       }
+    } catch {
+      Toast.show({ icon: 'fail', content: '试听失败，请检查网络后重试' });
     } finally {
       setSynthesizingId('');
     }
@@ -236,7 +291,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
           <div>
             <h3 className="text-h2 text-[#1F2937]">火山引擎豆包 · 爸妈声音复刻工坊</h3>
             <p className="text-[11px] text-[#6B7280]">
-              真实对接字节跳动 MegaTTS (`/api/v1/mega_tts/audio/upload` & `/api/v1/tts`)
+              录制样本并训练专属音色
             </p>
           </div>
           <button type="button" onClick={onClose} className="kid-btn kid-btn-ghost kid-btn-sm">
@@ -250,7 +305,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
             <div className="p-3 rounded-xl bg-[#FFF8E8] border border-[#E8D9C8] text-xs text-[#9B742F] space-y-1">
               <div className="font-bold">尚未配置新版豆包语音 API Key</div>
               <p>
-                请在 `apps/parent-h5/.env.local` 中填入 `DOUBAO_SPEECH_API_KEY`（只需这一个 Key）及复刻音色 ID `S_xxxxxx`，即可直接调用豆包语音 V3 接口合成真实 MP3。
+                服务暂不可用，请联系管理员检查语音服务配置。
               </p>
             </div>
           )}
@@ -261,7 +316,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
               <span className="text-caption font-bold text-[#1F2937]">
                 已绑定的爸妈克隆音色 ({voiceClones.length})
               </span>
-              <span className="text-[10px] text-[#8B8A80]">Cluster: volcano_icl</span>
+
             </div>
 
             <div className="space-y-2">
@@ -281,7 +336,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                         <span className="font-bold text-xs text-[#242620] truncate">{vc.title}</span>
                       </div>
                       <div className="text-[10px] text-[#77786F] mt-1 font-mono truncate">
-                        speaker_id: {vc.providerVoiceId}
+                        音色 ID: {vc.providerVoiceId} · {({ ready: '可用', training: '训练中', failed: '训练失败', unknown: '状态待确认' } as const)[vc.status] || '状态待确认'}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -306,7 +361,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteVoiceCloneProfile(vc.id)}
+                        onClick={() => void deleteVoiceCloneProfile(vc.id).catch(() => Toast.show({ icon: 'fail', content: '删除失败，请重试' }))}
                         className="kid-btn kid-btn-danger-ghost kid-btn-sm !h-6 !min-h-[24px] !px-1.5"
                         title="删除此音色"
                       >
@@ -371,13 +426,13 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
               </div>
               <div>
                 <label className="text-caption text-[#1F2937] block mb-1">
-                  火山引擎 Speaker ID（自定义 S_xxx，留空自动生成）
+                  火山引擎已开通的音色 ID
                 </label>
                 <input
                   type="text"
                   value={speakerIdInput}
                   onChange={e => setSpeakerIdInput(e.target.value)}
-                  placeholder="如：S_mom_01（留空将自动生成）"
+                  placeholder="在火山引擎控制台获取 S_ 开头的音色 ID"
                   className="kid-input font-mono"
                 />
               </div>
@@ -403,10 +458,10 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                 ) : recordedWavBase64 ? (
                   <span className="text-[#4C7866] font-bold inline-flex items-center gap-1">
                     <IconCheck className="w-3.5 h-3.5" />
-                    已就绪 WAV 音频样本 ({recordSec}s)，可回放或上传复刻
+                    已就绪 {audioFormat.toUpperCase()} 音频样本{recordSec > 0 ? `（${recordSec} 秒）` : ''}，可回放或上传复刻
                   </span>
                 ) : (
-                  <span>可直接麦克风录音，或上传现成的 WAV/MP3 录音文件</span>
+                  <span>可录音或上传 WAV/MP3 文件，最大 3 MB</span>
                 )}
               </div>
 
@@ -425,7 +480,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                   <span>上传文件</span>
                   <input
                     type="file"
-                    accept="audio/wav,audio/mp3,audio/mpeg"
+                    accept=".wav,.mp3,audio/wav,audio/mpeg"
                     onChange={handleUploadSampleFile}
                     className="hidden"
                   />
@@ -449,7 +504,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         <div className="p-4 bg-[#F9FAFB] border-t border-[#E5E7EB] shrink-0">
           <button
             type="button"
-            disabled={isCloning || !recordedWavBase64}
+            disabled={isCloning || !recordedWavBase64 || !speakerIdInput.trim()}
             onClick={handleSubmitClone}
             className="w-full kid-btn kid-btn-primary kid-btn-lg"
           >

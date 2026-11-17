@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isDoubaoConfigured, synthesizeDoubaoTts } from '../../../../server/doubaoVoice';
+import { isDoubaoConfigured, synthesizeDoubaoTts, getDoubaoVoiceCloneStatus } from '../../../../server/doubaoVoice';
 
 /**
  * 火山引擎豆包语音合成 (TTS) API (`/api/v1/tts`)
@@ -31,6 +31,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (isClonedVoice || voiceType.startsWith('S_')) {
+      if (!voiceType.startsWith('S_')) return NextResponse.json({ error: '请选择有效的复刻音色' }, { status: 400 });
+      const clone = await getDoubaoVoiceCloneStatus(voiceType);
+      if (clone.status !== 2 && clone.status !== 4) return NextResponse.json({ error: '音色尚未训练成功，请先查询音色状态' }, { status: 409 });
+    }
     const result = await synthesizeDoubaoTts({
       text,
       voiceType: voiceType || undefined,

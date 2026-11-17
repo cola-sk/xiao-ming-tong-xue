@@ -262,6 +262,18 @@ export async function saveVoiceCloneProfile(params: {
   return record;
 }
 
+export async function updateVoiceCloneStatus(speakerId: string, status: string): Promise<void> {
+  const sql = getNeonSql();
+  if (sql) {
+    await ensureNeonSchema();
+    await sql`UPDATE voice_clone_profiles SET status = ${status} WHERE provider_voice_id = ${speakerId}`;
+  } else {
+    for (const profile of memVoiceClones.values()) {
+      if (profile.providerVoiceId === speakerId) profile.status = status;
+    }
+  }
+}
+
 export async function deleteVoiceCloneProfileById(id: string): Promise<void> {
   const sql = getNeonSql();
   if (sql) {

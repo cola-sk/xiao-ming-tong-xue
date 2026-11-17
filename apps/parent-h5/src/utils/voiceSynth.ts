@@ -112,3 +112,13 @@ export function playAudioOrFallback(
     setTimeout(resolve, Math.max(1500, (fallbackText?.length || 6) * 200));
   });
 }
+
+/** Play generated audio without claiming that browser fallback is the cloned voice. */
+export function playAudioStrict(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(url);
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error('音频播放失败'));
+    audio.play().catch(reject);
+  });
+}

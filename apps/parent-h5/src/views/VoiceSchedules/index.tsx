@@ -8,7 +8,7 @@ import { VoiceSchedule } from '../../services/types';
 import { ScheduleFormModal } from './ScheduleFormModal';
 import { VoiceCloneModal } from './VoiceCloneModal';
 import { IconPlus, IconVolume, IconMic, IconSparkle } from '../../components/Icons';
-import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
+import { playAudioStrict, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const VoiceSchedulesPage: React.FC = () => {
   const {
@@ -84,12 +84,11 @@ export const VoiceSchedulesPage: React.FC = () => {
       Toast.show({
         content: `正在播放定时播报音频 (MD5: ${sched.audioMd5?.slice(0, 6) || 'local'})`,
       });
-      await playAudioOrFallback(
-        sched.audioUrl,
-        sched.textContent,
-        sched.sourceType,
-        sched.clonedSpeakerRole
-      );
+      try {
+        await playAudioStrict(sched.audioUrl);
+      } catch {
+        Toast.show({ icon: 'fail', content: '播放失败，请重试' });
+      }
       return;
     }
 
@@ -97,6 +96,10 @@ export const VoiceSchedulesPage: React.FC = () => {
     const cloneProfile = sched.clonedVoiceId
       ? voiceClones.find(c => c.id === sched.clonedVoiceId)
       : undefined;
+    if (sched.sourceType === 'parent_clone' && !cloneProfile?.providerVoiceId) {
+      Toast.show({ icon: 'fail', content: '音色档案不存在，无法合成' });
+      return;
+    }
     const isCloned = Boolean(sched.sourceType === 'parent_clone' && cloneProfile?.providerVoiceId);
     const ttsRes = await requestDoubaoTtsAudio({
       text: sched.textContent,
@@ -104,33 +107,29 @@ export const VoiceSchedulesPage: React.FC = () => {
       isClonedVoice: isCloned,
       persist: true,
     });
-    const savedUrl = ttsRes.audioUrl || ttsRes.audioDataUrl;
+    const savedUrl = ttsRes.audioUrl;
     if (ttsRes.ok && savedUrl) {
-      updateSchedule(sched.id, {
-        audioUrl: savedUrl,
-        audioMd5: ttsRes.audioMd5 || null,
-      });
+      try {
+        await updateSchedule(sched.id, {
+          audioUrl: savedUrl,
+          audioMd5: ttsRes.audioMd5 || null,
+        });
+      } catch {
+        Toast.show({ icon: 'fail', content: '保存音频失败，请重试' });
+        return;
+      }
       Toast.show({
         content: `已生成并保存永久音频地址 (${savedUrl})，正在试播`,
       });
-      await playAudioOrFallback(
-        savedUrl,
-        sched.textContent,
-        sched.sourceType,
-        sched.clonedSpeakerRole
-      );
+      try {
+        await playAudioStrict(savedUrl);
+      } catch {
+        Toast.show({ icon: 'fail', content: '播放失败，请重试' });
+      }
       return;
     }
 
-    Toast.show({
-      content: `正在试播「${renderSourceBadge(sched)}」`,
-    });
-    await playAudioOrFallback(
-      null,
-      sched.textContent,
-      sched.sourceType,
-      sched.clonedSpeakerRole
-    );
+    Toast.show({ icon: 'fail', content: ttsRes.error || '音频合成失败，请重试' });
   };
 
   return (
@@ -144,7 +143,7 @@ export const VoiceSchedulesPage: React.FC = () => {
             <span className="kid-status-chip kid-status-new">已克隆 {voiceClones.length} 个音色</span>
           </div>
           <p className="text-xs text-[#77786F] mt-1">
-            爸爸妈妈录一段 6 秒声音即可完成克隆；输入任意文字都能转成爸妈的声音在设备端准点播报！
+            录制样本并等待训练完成后，可使用专属音色生成定时播报音频。
           </p>
         </div>
         <button
@@ -162,7 +161,7 @@ export const VoiceSchedulesPage: React.FC = () => {
         <div>
           <h2 className="text-h2 text-[#1F2937]">定时语音播报 ({schedules.length})</h2>
           <p className="text-caption text-[#9CA3AF]">
-            支持爸妈克隆声音合成 · 硬件 RTC 断网准点唤醒
+            支持爸妈克隆声音合成
           </p>
         </div>
         <button

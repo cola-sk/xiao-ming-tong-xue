@@ -166,7 +166,7 @@ sequenceDiagram
 ### 2.3 定时语音播报与爸妈声音复刻方案
 
 1. **声音复刻（`seed-icl-2.0`）**：
-   * 家长在 H5 录制 5~15 秒 WAV 样本，支持自定义或自动生成唯一 `S_mom_xxx` / `S_dad_xxx` 作为 `speaker_id` 调用 `/api/v1/mega_tts/audio/upload`，成功后将 `provider_voice_id` 存入 `voice_clone_profiles`。
+   * 家长在 H5 录制或上传 WAV/MP3 样本（本项目限制 3 MiB），填写火山引擎控制台已开通的预付费 `S_` 音色 ID；后端通过 [声音复刻 V3 API](https://docs.volcengine.com/docs/doubao-voice/sound-replica-api-v3?lang=zh) 上传并查询训练状态。仅训练成功或已激活的音色可用于合成。
 2. **定时音频永久地址 + 硬件 RTC 离线响铃**：
    * 新建/编辑定时提醒时开启 `persist: true`，服务端将豆包合成的 MP3 按 `(voiceType + text)` 计算 MD5 存入 Neon `tts_audio_files`，生成永久地址 `/api/v1/audio/{md5}`（Edge CDN 缓存 1 年）。
    * ESP32 在心跳检测到日程变化后，调用 `GET /api/v1/schedules` 拉取 JSON 并静默预下载 MP3；由本地时间监控与 `PCF85063` 硬件 RTC 在指定 `HH:MM` 与星期掩码下准点触发响铃，孩子点击屏幕停止后上送 `alarm_ack` 更新任务确认时间。

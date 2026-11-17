@@ -6,9 +6,8 @@ import { VoiceSchedule } from '../../services/types';
 import { useAppStore } from '../../stores/useAppStore';
 import { IconMic, IconVolume, IconSparkle } from '../../components/Icons';
 import {
-  playAudioOrFallback,
+  playAudioStrict,
   requestDoubaoTtsAudio,
-  speakBySourceType,
 } from '../../utils/voiceSynth';
 
 interface Props {
@@ -96,24 +95,12 @@ export const ScheduleFormModal: React.FC<Props> = ({
       });
       if (res.ok && res.audioDataUrl) {
         Toast.show({ icon: 'success', content: '豆包 TTS 合成成功，正在播放真实音频' });
-        await playAudioOrFallback(
-          res.audioDataUrl,
-          textContent.trim(),
-          sourceType,
-          selectedCloneProfile?.speakerRole || '妈妈'
-        );
+        await playAudioStrict(res.audioDataUrl);
       } else {
-        speakBySourceType(
-          textContent.trim(),
-          sourceType,
-          selectedCloneProfile?.speakerRole || '妈妈'
-        );
-        Toast.show({
-          content: res.error
-            ? `${res.error}（已用本地模拟试听）`
-            : '正在用模拟音色试听',
-        });
+        Toast.show({ icon: 'fail', content: res.error || '合成失败，请重试' });
       }
+    } catch {
+      Toast.show({ icon: 'fail', content: '播放失败，请重试' });
     } finally {
       setPreviewing(false);
     }
@@ -155,10 +142,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
           isClonedVoice: isCloned,
           persist: true, // 定时语音任务开启持久化，生成 /api/v1/audio/{md5}.mp3 永久地址
         });
-        if (ttsResult.ok && (ttsResult.audioUrl || ttsResult.audioDataUrl)) {
+        if (ttsResult.ok && ttsResult.audioUrl && ttsResult.audioMd5) {
           // 优先保存标准 HTTP 播放/下载地址 `/api/v1/audio/{md5}.mp3`，避免在业务表存储庞大的 Base64
-          audioUrl = ttsResult.audioUrl || ttsResult.audioDataUrl || null;
+          audioUrl = ttsResult.audioUrl;
           audioMd5 = ttsResult.audioMd5 || null;
+        } else {
+          Toast.show({ icon: 'fail', content: ttsResult.error || '合成失败，请重试' });
+          return;
         }
       }
 
@@ -174,7 +164,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
             };
 
       if (initialSchedule) {
-        updateSchedule(initialSchedule.id, {
+        await updateSchedule(initialSchedule.id, {
           title: title.trim(),
           timeStr,
           repeatDays,
@@ -189,11 +179,11 @@ export const ScheduleFormModal: React.FC<Props> = ({
         Toast.show({
           icon: 'success',
           content: audioUrl
-            ? '已通过豆包合成最新音频并同步设备 RTC'
-            : '定时任务已更新并同步至设备 RTC',
+            ? '任务已保存，设备将在下次同步时获取'
+            : '定时任务已更新',
         });
       } else {
-        addSchedule({
+        await addSchedule({
           title: title.trim(),
           timeStr,
           repeatDays,
@@ -212,11 +202,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
             ? `豆包已合成「${selectedCloneProfile?.speakerRole || '专属'}」真实 MP3 音频（MD5: ${audioMd5?.slice(
                 0,
                 6
-              )}）并下发设备`
+              )}），等待设备同步`
             : '定时语音已创建（配置豆包密钥后将自动生成真实 MP3）',
         });
       }
       onClose();
+    } catch {
+      Toast.show({ icon: 'fail', content: '保存失败，请检查网络后重试' });
     } finally {
       setIsSynthesizing(false);
     }
@@ -431,7 +423,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
               />
             </div>
             <p className="text-[11px] text-[#8B8A80] pt-2 border-t border-[#F3F4F6]">
-              硬件保障：云端合成好的爸妈克隆音频会预先缓存至 ESP32-S3 本地 Flash/TF 卡，并由板载 `PCF85063` 独立硬件 RTC 芯片准点唤醒，断网也能正常响起爸妈的声音。
+              定时音频保存后，设备将在同步时获取任务。离线缓存与定时播放仍需设备端支持。
             </p>
           </div>
         </div>
