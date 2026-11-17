@@ -27,21 +27,7 @@ const INITIAL_CHILDREN: Child[] = [
   },
 ];
 
-const INITIAL_DEVICES: Device[] = [
-  {
-    id: 'esp32_pet_001',
-    familyId: 'fam-001',
-    childId: 'child-001',
-    alias: '堂堂的小铭同学',
-    deviceModel: 'Waveshare ESP32-S3-Touch-AMOLED-2.16',
-    macAddress: '34:85:18:A2:B9:01',
-    status: 'paired',
-    firmwareVersion: '1.0.0-box',
-    batteryPercent: 88,
-    isOnline: true,
-    lastSeenAt: new Date().toISOString(),
-  },
-];
+const INITIAL_DEVICES: Device[] = [];
 
 const INITIAL_MESSAGES: ChatVoiceMessage[] = [];
 
@@ -112,8 +98,11 @@ interface AppState {
   // Actions - 功能一：AI 宠物对话与人设配置
   updatePetConfig: (updates: Partial<PetAiConfig>) => void;
 
-  // Actions - 设备与家庭管理
-  addDevice: (alias: string, childNickname: string) => void;
+  // Actions - 设备与家庭管理（真实联网状态同步）
+  addDevice: (deviceId: string, alias: string, childNickname: string) => Promise<void>;
+  syncDevicesFromServer: () => Promise<void>;
+  removeDevice: (deviceId: string) => Promise<void>;
+  selectDevice: (deviceId: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -122,7 +111,7 @@ export const useAppStore = create<AppState>()(
       family: INITIAL_FAMILY,
       children: INITIAL_CHILDREN,
       devices: INITIAL_DEVICES,
-      selectedDeviceId: INITIAL_DEVICES[0].id,
+      selectedDeviceId: '',
       messages: INITIAL_MESSAGES,
       schedules: INITIAL_SCHEDULES,
       voiceClones: INITIAL_VOICE_CLONES,
@@ -242,41 +231,126 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
-      addDevice: (alias, childNickname) => {
+      addDevice: async (deviceIdInput, alias, childNickname) => {
         const state = get();
+        const deviceId = deviceIdInput.trim();
+        if (!deviceId) throw new Error('请输入设备 ID');
+
+        const res = await fetch('/api/v1/device/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'bind',
+            deviceId,
+            alias: alias.trim() || `${childNickname.trim() || '宝贝'}的小铭同学`,
+            childNickname: childNickname.trim() || '宝贝',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || '设备绑定失败');
+        }
+
+        const remoteDev = data.device;
         const childId = `child-${Date.now()}`;
-        const deviceId = `esp32_pet_${Date.now().toString().slice(-4)}`;
         const newChild: Child = {
           id: childId,
           familyId: state.family.id,
-          nickname: childNickname.trim() || '宝贝',
+          nickname: remoteDev?.childNickname || childNickname.trim() || '宝贝',
         };
         const newDevice: Device = {
-          id: deviceId,
+          id: remoteDev?.id || deviceId,
           familyId: state.family.id,
           childId,
-          alias: alias.trim() || `${newChild.nickname}的小铭同学`,
-          deviceModel: 'Waveshare ESP32-S3-Touch-AMOLED-2.16',
-          macAddress: '34:85:18:C4:E1:88',
+          alias: remoteDev?.alias || alias.trim() || `${newChild.nickname}的小铭同学`,
+          deviceModel: remoteDev?.deviceModel || 'Waveshare ESP32-S3-Touch-AMOLED-2.16',
+          macAddress: remoteDev?.macAddress || '',
           status: 'paired',
-          firmwareVersion: '1.0.0-box',
-          batteryPercent: 100,
-          isOnline: true,
-          lastSeenAt: new Date().toISOString(),
+          firmwareVersion: remoteDev?.firmwareVersion || '1.0.0',
+          batteryPercent: Number(remoteDev?.batteryPercent ?? 0),
+          isOnline: Boolean(remoteDev?.isOnline),
+          lastSeenAt: remoteDev?.lastSeenAt || null,
         };
         set(s => ({
           children: [...s.children, newChild],
-          devices: [...s.devices, newDevice],
-          selectedDeviceId: deviceId,
+          devices: [
+            ...s.devices.filter(d => d.id !== newDevice.id),
+            newDevice,
+          ],
+          selectedDeviceId: newDevice.id,
         }));
+      },
+
+      syncDevicesFromServer: async () => {
+        try {
+          const res = await fetch('/api/v1/device/status', { cache: 'no-store' });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!Array.isArray(data.devices)) return;
+
+          set(s => {
+            const mappedDevices: Device[] = data.devices.map((rd: any) => {
+              const existing = s.devices.find(d => d.id === rd.id);
+              return {
+                id: rd.id,
+                familyId: s.family.id,
+                childId: existing?.childId || s.children[0]?.id || 'child-001',
+                alias: rd.alias || existing?.alias || '小铭同学',
+                deviceModel: rd.deviceModel || 'Waveshare ESP32-S3-Touch-AMOLED-2.16',
+                macAddress: rd.macAddress || '',
+                status: 'paired',
+                firmwareVersion: rd.firmwareVersion || '1.0.0',
+                batteryPercent: Number(rd.batteryPercent ?? 0),
+                isOnline: Boolean(rd.isOnline),
+                lastSeenAt: rd.lastSeenAt || null,
+              };
+            });
+            const nextSelected =
+              mappedDevices.some(d => d.id === s.selectedDeviceId)
+                ? s.selectedDeviceId
+                : mappedDevices[0]?.id || '';
+            return {
+              devices: mappedDevices,
+              selectedDeviceId: nextSelected,
+            };
+          });
+        } catch {
+          // 忽略网络瞬断
+        }
+      },
+
+      removeDevice: async deviceId => {
+        await fetch(`/api/v1/device/status?deviceId=${encodeURIComponent(deviceId)}`, {
+          method: 'DELETE',
+        });
+        set(s => {
+          const remaining = s.devices.filter(d => d.id !== deviceId);
+          return {
+            devices: remaining,
+            selectedDeviceId:
+              s.selectedDeviceId === deviceId ? remaining[0]?.id || '' : s.selectedDeviceId,
+          };
+        });
+      },
+
+      selectDevice: deviceId => {
+        set({ selectedDeviceId: deviceId });
       },
     }),
     {
       name: 'xiaoming_pet_parent_store_v2',
-      version: 6,
+      version: 7,
       migrate: (persistedState: any) => {
         if (!persistedState) return persistedState;
         // 自动清理旧本地缓存中的测试/演示假数据
+        if (Array.isArray(persistedState.devices)) {
+          persistedState.devices = persistedState.devices.filter(
+            (d: any) => d.id !== 'esp32_pet_001'
+          );
+          if (persistedState.selectedDeviceId === 'esp32_pet_001') {
+            persistedState.selectedDeviceId = persistedState.devices[0]?.id || '';
+          }
+        }
         if (Array.isArray(persistedState.voiceClones)) {
           persistedState.voiceClones = persistedState.voiceClones.filter(
             (vc: any) =>

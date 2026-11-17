@@ -1,29 +1,78 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Popup, Toast } from 'antd-mobile';
+import { DeleteOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
 import { IconDevice, IconPlus, IconBattery, IconWifi } from '../../components/Icons';
 
 export const DeviceSettingsPage: React.FC = () => {
-  const { devices, children, selectedDeviceId, addDevice, petConfig, updatePetConfig } =
-    useAppStore();
+  const {
+    devices,
+    selectedDeviceId,
+    addDevice,
+    syncDevicesFromServer,
+    removeDevice,
+    selectDevice,
+    petConfig,
+    updatePetConfig,
+  } = useAppStore();
 
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [deviceIdInput, setDeviceIdInput] = useState('');
   const [alias, setAlias] = useState('');
   const [childNickname, setChildNickname] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleAddDevice = (e: React.FormEvent) => {
+  useEffect(() => {
+    void syncDevicesFromServer();
+    const timer = window.setInterval(() => {
+      void syncDevicesFromServer();
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [syncDevicesFromServer]);
+
+  const handleAddDevice = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!deviceIdInput.trim()) {
+      Toast.show({ content: '请输入设备 ID（可在 ESP32 串口日志查看）' });
+      return;
+    }
     if (!childNickname.trim()) {
       Toast.show({ content: '请输入宝贝昵称' });
       return;
     }
-    addDevice(alias, childNickname);
-    setAlias('');
-    setChildNickname('');
-    setAddModalOpen(false);
-    Toast.show({ icon: 'success', content: '已添加并绑定微雪 ESP32-S3 语音设备' });
+    setSubmitting(true);
+    try {
+      await addDevice(deviceIdInput.trim(), alias, childNickname);
+      setDeviceIdInput('');
+      setAlias('');
+      setChildNickname('');
+      setAddModalOpen(false);
+      Toast.show({ icon: 'success', content: '已绑定设备，等待 ESP32 联网心跳上线' });
+    } catch (err) {
+      Toast.show({
+        icon: 'fail',
+        content: err instanceof Error ? err.message : '设备绑定失败',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleVolumeChange = (val: number) => {
+    updatePetConfig({ volumeLevel: val });
+    if (selectedDeviceId) {
+      fetch('/api/v1/device/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'volume',
+          deviceId: selectedDeviceId,
+          volumeLevel: val,
+        }),
+      }).catch(() => {});
+    }
   };
 
   return (
@@ -32,7 +81,7 @@ export const DeviceSettingsPage: React.FC = () => {
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5">
           <div>
-            <h2 className="text-h2">微雪 2.16 寸语音设备</h2>
+            <h2 className="text-h2">微雪 2.16 寸语音设备 ({devices.length})</h2>
             <p className="text-caption text-[#9CA3AF]">
               硬件型号：Waveshare ESP32-S3-Touch-AMOLED-2.16 (480×480)
             </p>
@@ -47,45 +96,92 @@ export const DeviceSettingsPage: React.FC = () => {
           </button>
         </div>
 
-        <div className="kid-list">
-          {devices.map(dev => {
-            const child = children.find(c => c.id === dev.childId);
-            const isCurrent = dev.id === selectedDeviceId;
-            return (
-              <div key={dev.id} className="kid-list-row">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-9 h-9 rounded-xl bg-[#F3F1EB] flex items-center justify-center text-[#3E493F] shrink-0">
-                    <IconDevice className="w-5 h-5" />
+        {devices.length === 0 ? (
+          <div className="kid-card text-center py-8 space-y-2">
+            <p className="text-xs text-[#8B8A80]">
+              尚未绑定任何 ESP32-S3 硬件设备
+            </p>
+            <p className="text-[11px] text-[#9CA3AF]">
+              烧录固件并联网后，设备会自动向云端发送心跳；您也可以点击右上角「配对新设备」手动绑定设备 ID
+            </p>
+          </div>
+        ) : (
+          <div className="kid-list">
+            {devices.map(dev => {
+              const isCurrent = dev.id === selectedDeviceId;
+              return (
+                <div
+                  key={dev.id}
+                  onClick={() => selectDevice(dev.id)}
+                  className="kid-list-row cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-9 h-9 rounded-xl bg-[#F3F1EB] flex items-center justify-center text-[#3E493F] shrink-0">
+                      <IconDevice className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-sm truncate">{dev.alias}</span>
+                        {isCurrent && (
+                          <span className="kid-status-chip kid-status-complete">当前选中</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] font-mono text-[#9CA3AF] mt-0.5">
+                        ID: {dev.id}
+                      </div>
+                      <div className="text-xs text-[#6B7280] mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`inline-flex items-center gap-1 font-semibold ${
+                            dev.isOnline ? 'text-[#4C7866]' : 'text-[#9CA3AF]'
+                          }`}
+                        >
+                          <IconWifi className="w-3 h-3" />
+                          {dev.isOnline ? '在线' : '离线'}
+                        </span>
+                        <span>·</span>
+                        <span className="inline-flex items-center gap-1">
+                          <IconBattery className="w-3 h-3" />
+                          {dev.isOnline || dev.batteryPercent > 0
+                            ? `${dev.batteryPercent}%`
+                            : '未上报'}
+                        </span>
+                        {dev.lastSeenAt && (
+                          <>
+                            <span>·</span>
+                            <span className="text-[10px] text-[#9CA3AF]">
+                              心跳{' '}
+                              {new Date(dev.lastSeenAt).toLocaleTimeString('zh-CN', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-sm truncate">{dev.alias}</span>
-                      {isCurrent && (
-                        <span className="kid-status-chip kid-status-complete">当前活跃</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-[#6B7280] mt-0.5 flex items-center gap-2 flex-wrap">
-                      <span>宝贝：{child?.nickname || '天天'}</span>
-                      <span>·</span>
-                      <span className="inline-flex items-center gap-1 text-[#4C7866]">
-                        <IconWifi className="w-3 h-3" />
-                        在线
-                      </span>
-                      <span>·</span>
-                      <span className="inline-flex items-center gap-1">
-                        <IconBattery className="w-3 h-3" />
-                        {dev.batteryPercent}%
-                      </span>
-                    </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono text-[10px] text-[#9CA3AF]">
+                      v{dev.firmwareVersion}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        void removeDevice(dev.id);
+                      }}
+                      className="kid-btn kid-btn-danger-ghost kid-btn-sm !h-6 !min-h-[24px] !px-1.5"
+                      title="解绑设备"
+                    >
+                      <DeleteOutline />
+                    </button>
                   </div>
                 </div>
-                <span className="font-mono text-[10px] text-[#9CA3AF] shrink-0">
-                  {dev.firmwareVersion}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* 2. 设备喇叭音量与盲操按键说明 */}
@@ -105,7 +201,7 @@ export const DeviceSettingsPage: React.FC = () => {
           max={100}
           step={5}
           value={petConfig.volumeLevel}
-          onChange={e => updatePetConfig({ volumeLevel: Number(e.target.value) })}
+          onChange={e => handleVolumeChange(Number(e.target.value))}
           className="w-full accent-[#B96043]"
         />
       </section>
@@ -137,6 +233,17 @@ export const DeviceSettingsPage: React.FC = () => {
         <form onSubmit={handleAddDevice} className="p-5 pb-8 space-y-4 max-w-xl mx-auto">
           <h3 className="text-h1">配对「小铭同学」语音设备</h3>
           <div>
+            <label className="block text-caption mb-1">设备 ID (Device ID) *</label>
+            <input
+              type="text"
+              required
+              value={deviceIdInput}
+              onChange={e => setDeviceIdInput(e.target.value)}
+              placeholder="例如：esp32_pet_a1b2（串口日志开机可见）"
+              className="kid-input font-mono"
+            />
+          </div>
+          <div>
             <label className="block text-caption mb-1">归属宝贝昵称 *</label>
             <input
               type="text"
@@ -165,8 +272,8 @@ export const DeviceSettingsPage: React.FC = () => {
             >
               取消
             </button>
-            <button type="submit" className="kid-btn kid-btn-primary flex-1">
-              确认绑定
+            <button type="submit" disabled={submitting} className="kid-btn kid-btn-primary flex-1">
+              {submitting ? '绑定中…' : '确认绑定'}
             </button>
           </div>
         </form>

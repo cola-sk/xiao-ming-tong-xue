@@ -4,5 +4,14 @@ idf_component_register(
         "ui_state_machine.c"
         "audio_engine.c"
         "rtc_scheduler.c"
+        "wifi_manager.c"
+        "device_sync.c"
     INCLUDE_DIRS "."
+    REQUIRES
+        esp_wifi
+        esp_netif
+        nvs_flash
+        esp_http_client
+        esp-tls
+        json
 )

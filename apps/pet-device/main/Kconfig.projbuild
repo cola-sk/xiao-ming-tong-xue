@@ -1,0 +1,28 @@
+menu "AI Chat Pet (小铭同学) Configuration"
+
+    config PET_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "myssid"
+        help
+            SSID (network name) for the ESP32-S3 device to connect to.
+
+    config PET_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "mypassword"
+        help
+            Wi-Fi password (WPA or WPA2).
+
+    config PET_SERVER_URL
+        string "Backend Server Base URL"
+        default "https://xiao-ming-tong-xue.vercel.app"
+        help
+            Base URL of the Next.js backend deployed on Vercel (without trailing slash).
+
+    config PET_HEARTBEAT_INTERVAL_SEC
+        int "Device Heartbeat Interval (seconds)"
+        range 5 60
+        default 15
+        help
+            Interval in seconds between HTTPS heartbeat sync requests to /api/v1/device/sync.
+
+endmenu

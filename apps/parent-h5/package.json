@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ai-chat-pet/contracts": "workspace:*",
+    "@neondatabase/serverless": "^1.2.1",
     "@supabase/supabase-js": "^2.46.2",
     "antd-mobile": "^5.38.0",
     "antd-mobile-icons": "^0.3.0",

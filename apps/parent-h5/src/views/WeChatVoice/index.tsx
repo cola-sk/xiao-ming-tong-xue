@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Switch, Toast } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { ChatVoiceMessage } from '../../services/types';
@@ -15,7 +15,16 @@ export const WeChatVoicePage: React.FC = () => {
     petConfig,
     sendParentVoiceMessage,
     markMessagePlayed,
+    syncDevicesFromServer,
   } = useAppStore();
+
+  useEffect(() => {
+    void syncDevicesFromServer();
+    const timer = window.setInterval(() => {
+      void syncDevicesFromServer();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [syncDevicesFromServer]);
 
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
   const [autoPlayOnDevice, setAutoPlayOnDevice] = useState(false);
@@ -135,20 +144,34 @@ export const WeChatVoicePage: React.FC = () => {
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <h2 className="text-[15px] font-bold text-[#292B25] truncate">
-                {currentDevice?.alias || '堂堂的小铭同学'}
+                {currentDevice ? currentDevice.alias : '尚未绑定硬件设备'}
               </h2>
               <span className="family-pet-name">AI伴侣：{petConfig.petName}</span>
             </div>
             <div className="family-account-meta mt-1 flex items-center gap-2.5">
-              <span className="inline-flex items-center gap-1 text-[#4C7866] font-semibold">
-                <IconWifi className="w-3.5 h-3.5" />
-                Wi-Fi 在线
-              </span>
-              <span className="text-[#D9D6CE]">·</span>
-              <span className="inline-flex items-center gap-1 text-[#77786F]">
-                <IconBattery className="w-3.5 h-3.5" />
-                电量 {currentDevice?.batteryPercent ?? 88}%
-              </span>
+              {currentDevice ? (
+                <>
+                  <span
+                    className={`inline-flex items-center gap-1 font-semibold ${
+                      currentDevice.isOnline ? 'text-[#4C7866]' : 'text-[#9CA3AF]'
+                    }`}
+                  >
+                    <IconWifi className="w-3.5 h-3.5" />
+                    {currentDevice.isOnline ? 'Wi-Fi 在线' : '设备离线'}
+                  </span>
+                  <span className="text-[#D9D6CE]">·</span>
+                  <span className="inline-flex items-center gap-1 text-[#77786F]">
+                    <IconBattery className="w-3.5 h-3.5" />
+                    {currentDevice.isOnline || currentDevice.batteryPercent > 0
+                      ? `电量 ${currentDevice.batteryPercent}%`
+                      : '电量未知'}
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs text-[#9CA3AF]">
+                  请前往「设备」页绑定微雪 ESP32-S3 硬件终端
+                </span>
+              )}
             </div>
           </div>
         </div>

@@ -17,6 +17,9 @@ importers:
       '@ai-chat-pet/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@neondatabase/serverless':
+        specifier: ^1.2.1
+        version: 1.2.1
       '@supabase/supabase-js':
         specifier: ^2.46.2
         version: 2.119.0
@@ -398,6 +401,10 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
+
+  '@neondatabase/serverless@1.2.1':
+    resolution: {integrity: sha512-PI2JjuyEFE7oZDTkV/s6WP4KEceCwnjQHClfunhysuIATtvcVTBLdA4UgHTnJo7C0mkK+OZ6U7SV1NDnYa0HgA==}
+    engines: {node: '>=19.0.0'}
 
   '@next/env@14.2.35':
     resolution: {integrity: sha512-DuhvCtj4t9Gwrx80dmz2F4t/zKQ4ktN8WrMwOuVzkJfBilwAwGr6v16M5eI8yCuZ63H9TTuEU09Iu2HqkzFPVQ==}
@@ -2607,6 +2614,8 @@ snapshots:
       '@emnapi/runtime': 1.11.3
       '@tybys/wasm-util': 0.10.5
     optional: true
+
+  '@neondatabase/serverless@1.2.1': {}
 
   '@next/env@14.2.35': {}
 
