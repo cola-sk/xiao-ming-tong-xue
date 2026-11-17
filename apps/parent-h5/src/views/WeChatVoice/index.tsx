@@ -53,7 +53,41 @@ export const WeChatVoicePage: React.FC = () => {
     };
   }, [syncDevicesFromServer, syncMessagesFromServer]);
 
+  const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([]);
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
+  const historyKey = `pet_chat_hidden_${selectedDeviceId || 'all'}`;
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(historyKey) || '[]');
+      setHiddenMessageIds(Array.isArray(saved) ? saved.filter(id => typeof id === 'string') : []);
+    } catch {
+      setHiddenMessageIds([]);
+    }
+  }, [historyKey]);
+  const hiddenIds = new Set(hiddenMessageIds);
+  const visibleMessages = messages.filter(message => !hiddenIds.has(message.id));
+
+  const clearLocalHistory = () => {
+    void Dialog.confirm({
+      title: '清空本机记录？',
+      content: '将隐藏当前聊天记录并清除本浏览器所有聊天语音缓存，服务器消息和未读语音仍会保留；清除浏览器数据后记录可能重新显示。',
+      confirmText: '清空本机记录',
+      cancelText: '取消',
+      onConfirm: async () => {
+        try {
+          await clearLocalChatAudio();
+          refreshLocalStats();
+          const ids = Array.from(new Set([...hiddenMessageIds, ...messages.map(message => message.id)]));
+          localStorage.setItem(historyKey, JSON.stringify(ids));
+          setHiddenMessageIds(ids);
+          Toast.show({ content: '已清空本机记录和语音缓存' });
+        } catch {
+          Toast.show({ icon: 'fail', content: '清空未完成，请检查浏览器存储权限后重试' });
+        }
+      },
+    });
+  };
+
   const [autoPlayOnDevice, setAutoPlayOnDevice] = useState(false);
   const [playingId, setPlayingId] = useState<string>('');
   const [recordState, setRecordState] = useState<'idle' | 'starting' | 'recording' | 'sending'>('idle');
@@ -313,39 +347,26 @@ export const WeChatVoicePage: React.FC = () => {
       {/* 微信式语音气泡流 */}
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5 gap-2">
-          <h3 className="approval-section-title">亲子双向微聊</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="approval-section-title">亲子双向微聊</h3>
+            {(visibleMessages.length > 0 || localCacheStats.count > 0) && <button type="button" onClick={clearLocalHistory} className="text-[10px] text-[#B96043] underline">清空本机记录</button>}
+          </div>
           <div className="flex items-center gap-2 text-[10px] text-[#929187]">
             <span>
               本地语音缓存 {localCacheStats.count} 条 (
               {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
             </span>
-            {localCacheStats.count > 0 && (
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await clearLocalChatAudio();
-                    refreshLocalStats();
-                    Toast.show({ content: '已清理本机语音缓存，聊天记录仍保留' });
-                  } catch {
-                    Toast.show({ icon: 'fail', content: '清理失败，请重试' });
-                  }
-                }}
-                className="text-[#B96043] underline"
-              >
-                清理音频
-              </button>
-            )}
+
           </div>
         </div>
 
         <div className="space-y-3">
-          {messages.length === 0 ? (
+          {visibleMessages.length === 0 ? (
             <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
               暂无亲子微聊语音记录，点击下方录音给宝贝发送语音
             </div>
           ) : (
-            messages.map(msg => {
+            visibleMessages.map(msg => {
             const isParent = msg.direction === 'parent_to_device';
             const isPlaying = playingId === msg.id;
             const isUnread = msg.status === 'unread';
