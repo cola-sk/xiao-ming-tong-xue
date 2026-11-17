@@ -8,6 +8,7 @@ idf_component_register(
         "device_sync.c"
         "chat_client.c"
         "chat_storage.c"
+        "mqtt_client_mgr.c"
     INCLUDE_DIRS "."
     REQUIRES
         driver
@@ -16,6 +17,7 @@ idf_component_register(
         nvs_flash
         esp_http_client
         esp-tls
+        mqtt
         mbedtls
         json
 )

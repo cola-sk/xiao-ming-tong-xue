@@ -38,19 +38,23 @@ flowchart LR
         Audio[("tts_audio_files<br/>定时 MP3 · MD5 去重")]
     end
 
-    subgraph External["火山引擎"]
+    subgraph External["外部云能力 (火山引擎 + EMQX)"]
         direction TB
-        Ark["火山方舟 LLM<br/>文本问答"]
-        Speech["豆包语音 V3<br/>TTS · 声音复刻"]
+        EMQX["EMQX Cloud Serverless\nmqtts :8883 / wss :8084<br/>REST :8443 Publish"]
+        Ark["火山方舟 LLM\n文本问答"]
+        Speech["豆包语音 V3\nTTS · 声音复刻"]
     end
 
-    H5 -->|"HTTPS · 管理与轮询"| Sync & Chat & Pet & Schedule & Voice
+    H5 -->|"HTTPS · 管理与语音收发"| Sync & Chat & Pet & Schedule & Voice
+    H5 <-->|"WSS · 毫秒级新语音/确认提醒"| EMQX
     ESP -->|"HTTPS · 心跳与事件"| Sync
+    ESP <-->|"MQTTs · <0.3s 唤醒推送"| EMQX
     ESP -->|"HTTPS · 微聊收发"| Chat
     ESP -->|"HTTPS · 文本提问"| Pet
     ESP -->|"HTTPS · 日程与音频拉取"| Schedule
     ESP -->|"HTTPS · 文本消息 TTS"| Voice
 
+    Sync & Chat & Schedule -->|"REST Publish"| EMQX
     Sync <--> Meta
     Sync -->|"未读数"| Queue
     Chat <--> Queue
@@ -74,12 +78,13 @@ flowchart LR
 
 ### 通信协议选型说明
 
-* **当前落地协议（HTTPS REST + 15 秒心跳多路复用）**：
-  * 后端部署在 **Vercel Serverless** 无状态函数环境（原生不支持持久化 WebSocket/MQTT 服务端长连接），因此 ESP32 端使用 `esp_http_client` + `esp_crt_bundle` 直连 HTTPS API，**零额外网关维护成本**。
-  * ESP32 每 15 秒上报一次 `POST /api/v1/device/sync`（心跳保活、`alarm_ack`、`voice_read`、电量、Wi-Fi RSSI），并在同一响应中下行获取：`serverEpochSec`（RTC 校时）、`volumeLevel`、`unreadMessagesCount`、`enabledSchedulesCount`，实现**在线判定（60 秒 TTL）**与**消息/日程同步**。
-* **后续进阶演进（可选）**：
-  * 如需家长发微聊后 **< 0.5 秒** 硬件立即响铃唤醒，可独立接入 MQTT Broker（如 EMQX Cloud），ESP32 通过 `esp-mqtt` 订阅指令主题唤醒拉取音频。
-  * 如需连续全双工实时打断对话，设备端可直连 WebSocket 流式语音通道。
+* **混合通信协议（EMQX Serverless MQTT 实时唤醒 + Vercel HTTPS 数据传输）**：
+  * **控制面（实时唤醒 `< 0.3s`）**：接入 **EMQX Cloud Serverless** 免费托管集群：
+    * **Vercel 后端**：不维护 TCP 长连，而是通过 EMQX REST API（`POST https://<host>:8443/api/v5/publish`，HTTP Basic Auth）毫秒级下发轻量信令。
+    * **ESP32 设备端**（[mqtt_client_mgr.c](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/pet-device/main/mqtt_client_mgr.c)）：通过原生 `esp-mqtt` 常连 `mqtts://<host>:8883` 订阅 `pet/{deviceId}/notify`，收到 `new_voice_msg` / `schedules_updated` / `config_updated` 后立刻拉取处理。
+    * **家长端 H5**（[useMqttParentSync.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/utils/useMqttParentSync.ts)）：通过 `wss://<host>:8084/mqtt` 订阅 `pet/{deviceId}/parent`，实时接收孩子新语音及闹钟确认事件。
+  * **数据面与兜底心跳（HTTPS REST）**：
+    * WAV/MP3 音频流、定时日程 JSON、心跳保活与状态确认继续走 Vercel HTTPS REST API（`POST /api/v1/device/sync`，开启 MQTT 后心跳可设为 30~60s 省电保活；未配置 EMQX 时自动降级为轮询同步，零单点故障）。
 
 ---
 
@@ -108,18 +113,19 @@ sequenceDiagram
     autonumber
     actor Parent as 家长 (H5 + IndexedDB)
     participant API as Vercel API + Neon DB
+    participant MQTT as EMQX Cloud Serverless
     participant Device as ESP32-S3 (+ Flash/TF)
     actor Child as 孩子
 
     rect rgb(245, 248, 245)
-        Note over Parent,Child: 方向 A：家长发语音给设备 (Parent -> Device)
+        Note over Parent,Child: 方向 A：家长发语音给设备 (<0.3s MQTT 唤醒)
         Parent->>Parent: 按住说话 -> wavRecorder 录制 24kHz WAV<br/>并立即存入家长端 IndexedDB
-        Parent->>API: POST /api/v1/chat/messages<br/>(携带 audioBase64 + autoPlay)
+        Parent->>API: POST /api/v1/chat/messages (audioBase64 + autoPlay)
         API-->>API: 写入未读消息，暂存 pending_audio_base64
-        Device->>API: 每 15s 心跳 POST /api/v1/device/sync
-        API-->>Device: 响应 unreadMessagesCount > 0
+        API->>MQTT: HTTPS :8443 /api/v5/publish -> pet/{id}/notify
+        MQTT-->>Device: MQTTs :8883 毫秒级唤醒 (event="new_voice_msg")
         Device->>API: GET /api/v1/chat/messages?status=unread
-        Device->>API: GET /api/v1/chat/messages/{id}/audio<br/>(若纯文字则调 /api/v1/tts 实时合成)
+        Device->>API: GET /api/v1/chat/messages/{id}/audio
         Device->>Device: chat_storage_save() 按三重配额落盘本地 WAV
         alt auto_play = true
             Device->>Child: 亮屏并立即外放家长原声
@@ -131,13 +137,13 @@ sequenceDiagram
     end
 
     rect rgb(252, 246, 242)
-        Note over Parent,Child: 方向 B：孩子发语音给家长 (Device -> Parent)
+        Note over Parent,Child: 方向 B：孩子发语音给家长 (<0.5s WSS 提醒)
         Child->>Device: 按住副页触摸屏或侧面 GPIO0 实体键说话
         Device->>Device: chat_storage_save() 本地保存 + Base64 编码
-        Device->>API: POST /api/v1/chat/messages<br/>(direction="device_to_parent", 附带 WAV Base64)
+        Device->>API: POST /api/v1/chat/messages (device_to_parent)
         API-->>API: 写入未读消息并暂存 pending_audio_base64
-        Parent->>API: 10s 轮询 GET /api/v1/chat/messages
-        API-->>Parent: 展示宝贝未读语音气泡 (含未读红点)
+        API->>MQTT: HTTPS :8443 /api/v5/publish -> pet/{id}/parent
+        MQTT-->>Parent: WSS :8084/mqtt 实时弹窗并刷新未读气泡
         Parent->>API: 点击气泡 GET /api/v1/chat/messages/{id}/audio
         Parent->>Parent: 存入本地 IndexedDB 并播放宝贝原声
         Parent->>API: 调 PATCH /api/v1/chat/messages 标为已读
@@ -196,8 +202,10 @@ ai-chat-pet/
 │   │   │   ├── deviceStore.ts          # 设备心跳、绑定、音量同步与 60s 在线判定
 │   │   │   ├── appDataStore.ts         # 日程、微聊(含阅后即焚音频)、人设、日志 CRUD
 │   │   │   ├── audioStore.ts           # 定时播报 MP3 持久化与按 MD5 去重
+│   │   │   ├── emqxPublisher.ts        # EMQX Cloud Serverless HTTP API 推送封装
 │   │   │   └── doubaoVoice.ts          # 豆包语音 V3 TTS 2.0 & 声音复刻接口封装
 │   │   ├── src/app/api/v1/
+│   │   │   ├── mqtt/config/route.ts    # 获取家长端 H5 WSS 订阅配置
 │   │   │   ├── device/sync/route.ts    # 设备心跳、校时、音量与 alarm_ack / voice_read
 │   │   │   ├── device/status/route.ts  # 家长端设备实时在线状态查询与绑定/解绑
 │   │   │   ├── ai/chat/route.ts        # 火山方舟 LLM 问答 + 豆包 TTS 实时语音回复
@@ -210,14 +218,16 @@ ai-chat-pet/
 │   │   │   └── audio/[md5]/route.ts    # 定时播报永久 MP3 下载/播放端点
 │   │   ├── src/utils/
 │   │   │   ├── wavRecorder.ts          # 浏览器 24kHz Mono WAV 录音封装
-│   │   │   └── chatAudioDb.ts          # 家长端 IndexedDB 本地微聊语音库 (200条/100MB LRU)
+│   │   │   ├── chatAudioDb.ts          # 家长端 IndexedDB 本地微聊语音库 (200条/100MB LRU)
+│   │   │   └── useMqttParentSync.ts    # 家长端 EMQX WSS 毫秒级事件监听 Hook
 │   │   └── src/views/                  # WeChatVoice / VoiceSchedules / PetAIConfig / DeviceSettings
 │   └── pet-device/                     # 微雪 ESP32-S3-Touch-AMOLED-2.16 固件 (ESP-IDF)
 │       ├── main/
-│       │   ├── main.c                  # 入口：初始化 Wi-Fi、存储配额、音频、RTC、UI 与心跳同步
-│       │   ├── Kconfig.projbuild       # menuconfig 配置 Wi-Fi、Server URL 与本地缓存配额
+│       │   ├── main.c                  # 入口：初始化 Wi-Fi、存储配额、音频、RTC、UI 与心跳/MQTT
+│       │   ├── Kconfig.projbuild       # menuconfig 配置 Wi-Fi、Server URL、EMQX 与缓存配额
 │       │   ├── wifi_manager.c/.h       # Wi-Fi STA 连网重连与 MAC 派生 DeviceID
-│       │   ├── device_sync.c/.h        # 15s HTTPS 心跳、RTC 校时、音量与 ACK 上报
+│       │   ├── mqtt_client_mgr.c/.h    # EMQX Serverless TLS (8883) 毫秒级订阅唤醒
+│       │   ├── device_sync.c/.h        # HTTPS 心跳兜底、RTC 校时、音量与 ACK 上报
 │       │   ├── rtc_scheduler.c/.h      # 拉取定时任务 JSON、MP3 预缓存与准点唤醒
 │       │   ├── chat_client.c/.h        # AI 对话音频流请求与亲子微聊 WAV 双向收发
 │       │   ├── chat_storage.c/.h       # 设备端 Flash/TF 本地微聊存储 (体积+条数+天数三重 FIFO)
@@ -246,6 +256,15 @@ VOLC_PET_VOICE_TYPE=zh_female_vv_uranus_bigtts
 # 火山方舟大模型（用于小铭同学问答）
 ARK_API_KEY=你的火山方舟API_KEY
 ARK_MODEL_ID=doubao-seed-2-0-mini-260428
+
+# EMQX Cloud Serverless（可选，用于 <0.3s 毫秒级推送）
+EMQX_HOST=你的部署域名.emqxsl.com
+EMQX_HTTP_PORT=8443
+EMQX_APP_ID=你的EMQX_App_ID
+EMQX_APP_SECRET=你的EMQX_App_Secret
+EMQX_WSS_PORT=8084
+EMQX_CLIENT_USERNAME=你在EMQX创建的客户端用户名
+EMQX_CLIENT_PASSWORD=你在EMQX创建的客户端密码
 ```
 
 ### 2. 本地启动与验证
