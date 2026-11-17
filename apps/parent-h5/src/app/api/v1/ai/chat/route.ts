@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isDoubaoConfigured, synthesizeDoubaoTts } from '@/server/doubaoVoice';
+import { getPetAiConfig, appendAiChatLog } from '@/server/appDataStore';
 
 /**
  * 清理回答中的 Emoji 和特殊符号，确保传给豆包语音 2.0 合成时发音自然流畅
@@ -13,16 +14,21 @@ function sanitizeTextForTts(text: string): string {
 
 /**
  * 豆包问答 (Volcengine Ark) + 豆包语音合成 (Doubao Speech V3) 一体化接口 (`/api/v1/ai/chat`)
- * 1. 问答大脑（LLM）：调用火山方舟 `doubao-seed-2-0-mini-260428` / `doubao-seed-evolving` 生成小铭同学回答
- * 2. 声音回复（TTS）：生成回答文字后，立即在服务端调用豆包语音 2.0 合成 MP3 音频，一次性返回 `{ reply, audioDataUrl, audioMd5 }`
+ * 1. 自动读取设备配置的宠物人设与音色 (`pet_ai_configs`)
+ * 2. 问答大脑（LLM）：调用火山方舟生成回答，并仅把问答文本记录写入 `ai_chat_logs`（音频不落库）
+ * 3. 声音回复（TTS）：调用豆包语音 2.0 实时合成 MP3，支持返回 JSON 或直接返回 `audio/mpeg` 供 ESP32 播放
  */
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
+  const deviceId: string = String(body.deviceId || 'default');
   const question: string = (body.question || '你好呀').trim();
-  const petName: string = body.petName || '小铭同学';
-  const voiceType: string = body.voiceType || 'zh_female_vv_uranus_bigtts';
+  const savedConfig = await getPetAiConfig(deviceId);
+
+  const petName: string = body.petName || savedConfig.petName || '小铭同学';
+  const voiceType: string = body.voiceType || savedConfig.voiceId || 'zh_female_vv_uranus_bigtts';
   const systemPrompt: string =
     body.systemPrompt ||
+    savedConfig.customPrompt ||
     `你是5岁的智能语音萌宠“${petName}”，性格活泼温暖，回答小朋友的问题要简短有趣、纯口语化（不要使用Emoji表情符号或Markdown格式），每次不超过50字。`;
 
   const arkApiKey = process.env.ARK_API_KEY || process.env.DOUBAO_ARK_API_KEY || '';
@@ -94,8 +100,16 @@ export async function POST(request: NextRequest) {
     )}」真是个超棒的问题！我是${petName}，最喜欢陪堂堂和正正一起探索奇妙世界啦！`;
   }
 
-  // 立即调用豆包语音 V3 实时合成回答音频流（persist: false，不写入数据库，播放完即释放）
+  // 1) 仅将纯文本问答写入 ai_chat_logs 表（不存音频）
+  const log = await appendAiChatLog({
+    deviceId,
+    childText: question,
+    petReplyText: reply,
+  }).catch(() => null);
+
+  // 2) 立即调用豆包语音 V3 实时合成回答音频流（persist: false，不写入数据库，播放完即释放）
   let audioDataUrl: string | undefined;
+  let audioBase64: string | undefined;
   if (isDoubaoConfigured()) {
     try {
       const cleanTtsText = sanitizeTextForTts(reply) || reply;
@@ -106,9 +120,23 @@ export async function POST(request: NextRequest) {
         persist: false,
       });
       audioDataUrl = ttsResult.audioDataUrl;
+      audioBase64 = ttsResult.audioBase64;
     } catch (err) {
       console.error('Doubao TTS synthesis in /api/v1/ai/chat failed:', err);
     }
+  }
+
+  // 若 ESP32 请求直接返回 MP3 二进制流
+  if (body.responseFormat === 'mp3' && audioBase64) {
+    const mp3Buf = Buffer.from(audioBase64, 'base64');
+    return new NextResponse(new Uint8Array(mp3Buf), {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': String(mp3Buf.length),
+        'X-Pet-Reply': encodeURIComponent(reply),
+      },
+    });
   }
 
   return NextResponse.json({
@@ -117,5 +145,6 @@ export async function POST(request: NextRequest) {
     arkConfigured: Boolean(arkApiKey),
     reply,
     audioDataUrl,
+    logId: log?.id,
   });
 }

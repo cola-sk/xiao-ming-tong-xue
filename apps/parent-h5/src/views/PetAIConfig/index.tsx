@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Toast } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { PET_PERSONAS } from '../../services/types';
@@ -8,10 +8,23 @@ import { BrandLogoXiaoming, IconVolume } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const PetAIConfigPage: React.FC = () => {
-  const { petConfig, aiLogs, updatePetConfig } = useAppStore();
+  const { petConfig, aiLogs, updatePetConfig, syncPetAiFromServer } = useAppStore();
 
   const [petName, setPetName] = useState(petConfig.petName);
   const [customPrompt, setCustomPrompt] = useState(petConfig.customPrompt);
+
+  useEffect(() => {
+    void syncPetAiFromServer();
+    const timer = window.setInterval(() => {
+      void syncPetAiFromServer();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [syncPetAiFromServer]);
+
+  useEffect(() => {
+    setPetName(petConfig.petName);
+    setCustomPrompt(petConfig.customPrompt);
+  }, [petConfig.petName, petConfig.customPrompt]);
 
   const handleSelectPersona = (persona: (typeof PET_PERSONAS)[number]) => {
     setCustomPrompt(persona.systemPrompt);

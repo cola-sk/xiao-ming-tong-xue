@@ -6,8 +6,10 @@ idf_component_register(
         "rtc_scheduler.c"
         "wifi_manager.c"
         "device_sync.c"
+        "chat_client.c"
     INCLUDE_DIRS "."
     REQUIRES
+        driver
         esp_wifi
         esp_netif
         nvs_flash

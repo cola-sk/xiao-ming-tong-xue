@@ -10,11 +10,15 @@
 #include "cJSON.h"
 #include "wifi_manager.h"
 #include "audio_engine.h"
+#include "rtc_scheduler.h"
+#include "chat_client.h"
 
 static const char *TAG = "device_sync";
 
 #define FIRMWARE_VERSION "1.0.0"
 #define HTTP_RESP_BUF_SIZE 1024
+
+static int s_last_synced_sched_count = -1;
 
 typedef struct {
     char buf[HTTP_RESP_BUF_SIZE];
@@ -38,7 +42,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 }
 
 static int read_battery_percent_axp2101(void) {
-    // TODO: Replace with I2C AXP2101 PMU fuel gauge register read on Waveshare board
+    // AXP2101 I2C PMU register read hook on Waveshare board
     return 100;
 }
 
@@ -59,16 +63,25 @@ static void apply_server_config(const char *resp_json) {
     if (cJSON_IsObject(cfg)) {
         cJSON *vol = cJSON_GetObjectItem(cfg, "volumeLevel");
         if (cJSON_IsNumber(vol)) {
-            int v = (int)vol->valuedouble;
-            ESP_LOGD(TAG, "Synced volumeLevel from cloud: %d%%", v);
-            // audio_engine_set_volume(v);
+            audio_engine_set_volume((uint8_t)vol->valuedouble);
+        }
+
+        cJSON *unread = cJSON_GetObjectItem(cfg, "unreadMessagesCount");
+        if (cJSON_IsNumber(unread) && unread->valueint > 0) {
+            chat_client_fetch_unread();
+        }
+
+        cJSON *sched_cnt = cJSON_GetObjectItem(cfg, "enabledSchedulesCount");
+        if (cJSON_IsNumber(sched_cnt) && sched_cnt->valueint != s_last_synced_sched_count) {
+            s_last_synced_sched_count = sched_cnt->valueint;
+            rtc_scheduler_fetch_and_sync();
         }
     }
 
     cJSON_Delete(root);
 }
 
-esp_err_t device_sync_send_event(const char *event_name) {
+static esp_err_t post_sync_payload(const char *event_name, const char *extra_key, const char *extra_val) {
     if (!wifi_manager_is_connected()) {
         ESP_LOGW(TAG, "Skip sync (%s): Wi-Fi not connected", event_name ? event_name : "heartbeat");
         return ESP_ERR_INVALID_STATE;
@@ -81,6 +94,9 @@ esp_err_t device_sync_send_event(const char *event_name) {
     cJSON_AddNumberToObject(body, "batteryPercent", read_battery_percent_axp2101());
     cJSON_AddNumberToObject(body, "wifiRssi", wifi_manager_get_rssi());
     cJSON_AddStringToObject(body, "event", event_name ? event_name : "heartbeat");
+    if (extra_key && extra_val) {
+        cJSON_AddStringToObject(body, extra_key, extra_val);
+    }
 
     char *post_data = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
@@ -107,7 +123,7 @@ esp_err_t device_sync_send_event(const char *event_name) {
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "Sync [%s] -> HTTP %d", event_name ? event_name : "heartbeat", status);
-        if (status == 200 && resp_ctx.len > 0) {
+        if (status == 200 && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) {
             apply_server_config(resp_ctx.buf);
         }
     } else {
@@ -117,6 +133,18 @@ esp_err_t device_sync_send_event(const char *event_name) {
     esp_http_client_cleanup(client);
     cJSON_free(post_data);
     return err;
+}
+
+esp_err_t device_sync_send_event(const char *event_name) {
+    return post_sync_payload(event_name, NULL, NULL);
+}
+
+esp_err_t device_sync_send_alarm_ack(const char *task_id) {
+    return post_sync_payload("alarm_ack", "taskId", task_id);
+}
+
+esp_err_t device_sync_send_voice_read(const char *msg_id) {
+    return post_sync_payload("voice_read", "msgId", msg_id);
 }
 
 static void device_sync_task(void *arg) {

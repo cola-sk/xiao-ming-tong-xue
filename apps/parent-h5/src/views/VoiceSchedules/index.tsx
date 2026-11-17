@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Switch, Empty, Dialog, Toast } from 'antd-mobile';
 import { EditSOutline, DeleteOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
@@ -17,7 +17,14 @@ export const VoiceSchedulesPage: React.FC = () => {
     updateSchedule,
     toggleSchedule,
     deleteSchedule,
+    syncSchedulesFromServer,
+    syncVoiceClonesFromServer,
   } = useAppStore();
+
+  useEffect(() => {
+    void syncSchedulesFromServer();
+    void syncVoiceClonesFromServer();
+  }, [syncSchedulesFromServer, syncVoiceClonesFromServer]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [cloneModalVisible, setCloneModalVisible] = useState(false);

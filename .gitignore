@@ -13,3 +13,4 @@ apps/pet-device/sdkconfig
 apps/pet-device/sdkconfig.old
 .vercel
 .env*
+*.tsbuildinfo

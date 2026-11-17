@@ -24,7 +24,12 @@ const SAMPLE_SCRIPTS: Record<'妈妈' | '爸爸', string> = {
 };
 
 export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
-  const { voiceClones, addVoiceCloneProfile, deleteVoiceCloneProfile } = useAppStore();
+  const {
+    voiceClones,
+    addVoiceCloneProfile,
+    deleteVoiceCloneProfile,
+    syncVoiceClonesFromServer,
+  } = useAppStore();
 
   const [speakerRole, setSpeakerRole] = useState<'妈妈' | '爸爸'>('妈妈');
   const [title, setTitle] = useState('妈妈的温柔声音');
@@ -45,13 +50,14 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
   useEffect(() => {
     if (!visible) return;
+    void syncVoiceClonesFromServer();
     fetch('/api/v1/voice-clone')
       .then(r => r.json())
       .then(data => {
         setDoubaoConfigured(Boolean(data.configured));
       })
       .catch(() => setDoubaoConfigured(false));
-  }, [visible]);
+  }, [visible, syncVoiceClonesFromServer]);
 
   const handleSelectRole = (role: '妈妈' | '爸爸') => {
     setSpeakerRole(role);
@@ -141,6 +147,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
       const finalVoiceId = data.providerVoiceId || resolvedSpeakerId;
       addVoiceCloneProfile({
+        id: data.profile?.id,
         speakerRole,
         title,
         sampleText: SAMPLE_SCRIPTS[speakerRole],

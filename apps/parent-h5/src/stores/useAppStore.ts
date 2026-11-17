@@ -66,6 +66,7 @@ interface AppState {
 
   // Actions - 爸妈声音克隆
   addVoiceCloneProfile: (payload: {
+    id?: string;
     speakerRole: '妈妈' | '爸爸';
     title: string;
     sampleText: string;
@@ -73,6 +74,7 @@ interface AppState {
     providerVoiceId?: string;
   }) => VoiceCloneProfile;
   deleteVoiceCloneProfile: (id: string) => void;
+  syncVoiceClonesFromServer: () => Promise<void>;
 
   // Actions - 功能三：亲子双向微聊
   sendParentVoiceMessage: (payload: {
@@ -82,21 +84,19 @@ interface AppState {
     autoPlay: boolean;
     audioUrl?: string;
   }) => void;
-  sendDeviceVoiceMessage: (payload: {
-    asrText: string;
-    durationSec: number;
-    audioUrl?: string;
-  }) => void;
   markMessagePlayed: (msgId: string) => void;
+  syncMessagesFromServer: () => Promise<void>;
 
   // Actions - 功能二：定时语音播报
   addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>) => void;
   updateSchedule: (id: string, updates: Partial<VoiceSchedule>) => void;
   toggleSchedule: (id: string) => void;
   deleteSchedule: (id: string) => void;
+  syncSchedulesFromServer: () => Promise<void>;
 
   // Actions - 功能一：AI 宠物对话与人设配置
   updatePetConfig: (updates: Partial<PetAiConfig>) => void;
+  syncPetAiFromServer: () => Promise<void>;
 
   // Actions - 设备与家庭管理（真实联网状态同步）
   addDevice: (deviceId: string, alias: string, childNickname: string) => Promise<void>;
@@ -118,117 +118,278 @@ export const useAppStore = create<AppState>()(
       petConfig: INITIAL_PET_CONFIG,
       aiLogs: INITIAL_AI_LOGS,
 
-      addVoiceCloneProfile: ({ speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId }) => {
+      addVoiceCloneProfile: ({ id, speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId }) => {
         const state = get();
         const profile: VoiceCloneProfile = {
-          id: `clone-${Date.now()}`,
+          id: id || `clone_${Date.now()}`,
           familyId: state.family.id,
           speakerRole,
           title: title.trim() || `${speakerRole}的克隆声音`,
           sampleText,
           sampleAudioUrl,
-          providerVoiceId: providerVoiceId || `cosyvoice_clone_${speakerRole}_${Date.now()}`,
+          providerVoiceId: providerVoiceId || `S_${speakerRole === '爸爸' ? 'dad' : 'mom'}_${Date.now()}`,
           status: 'ready',
           createdAt: new Date().toISOString(),
         };
-        set(s => ({ voiceClones: [profile, ...s.voiceClones] }));
+        set(s => ({
+          voiceClones: [profile, ...s.voiceClones.filter(v => v.id !== profile.id)],
+        }));
         return profile;
       },
 
       deleteVoiceCloneProfile: id => {
         set(s => ({ voiceClones: s.voiceClones.filter(v => v.id !== id) }));
+        fetch(`/api/v1/voice-clone?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
+          () => {}
+        );
+      },
+
+      syncVoiceClonesFromServer: async () => {
+        try {
+          const res = await fetch('/api/v1/voice-clone', { cache: 'no-store' });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (Array.isArray(data.profiles)) {
+            set(s => ({
+              voiceClones: data.profiles.map((p: any) => ({
+                id: p.id,
+                familyId: s.family.id,
+                speakerRole: p.speakerRole === '爸爸' ? '爸爸' : '妈妈',
+                title: p.title,
+                sampleText: p.sampleText || '',
+                providerVoiceId: p.providerVoiceId,
+                status: p.status || 'ready',
+                createdAt: p.createdAt,
+              })),
+            }));
+          }
+        } catch {
+          // ignore
+        }
       },
 
       sendParentVoiceMessage: ({ senderName, asrText, durationSec, autoPlay, audioUrl }) => {
         const state = get();
+        const id = `msg_${Date.now()}`;
+        const deviceId = state.selectedDeviceId || 'default';
+        const cleanText = asrText.trim() || '（语音消息）';
         const newMsg: ChatVoiceMessage = {
-          id: `msg-${Date.now()}`,
+          id,
           familyId: state.family.id,
-          deviceId: state.selectedDeviceId,
+          deviceId,
           childId: state.children[0]?.id,
           direction: 'parent_to_device',
           senderName: senderName || '妈妈',
-          audioUrl: audioUrl || 'mock://parent-voice.webm',
+          audioUrl: audioUrl || '',
           durationSec: Math.max(1, durationSec),
-          asrText: asrText.trim() || '（语音消息）',
+          asrText: cleanText,
           autoPlay,
-          status: autoPlay ? 'played' : 'unread',
-          createdAt: new Date().toISOString(),
-        };
-        set(s => ({ messages: [...s.messages, newMsg] }));
-      },
-
-      sendDeviceVoiceMessage: ({ asrText, durationSec, audioUrl }) => {
-        const state = get();
-        const childName = state.children[0]?.nickname || '宝贝';
-        const newMsg: ChatVoiceMessage = {
-          id: `msg-${Date.now()}`,
-          familyId: state.family.id,
-          deviceId: state.selectedDeviceId,
-          childId: state.children[0]?.id,
-          direction: 'device_to_parent',
-          senderName: childName,
-          audioUrl: audioUrl || 'mock://device-voice.webm',
-          durationSec: Math.max(1, durationSec),
-          asrText: asrText.trim() || '妈妈，我想你啦，你什么时候回来呀？',
-          autoPlay: false,
           status: 'unread',
           createdAt: new Date().toISOString(),
         };
         set(s => ({ messages: [...s.messages, newMsg] }));
+        fetch('/api/v1/chat/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            deviceId,
+            direction: 'parent_to_device',
+            senderName: newMsg.senderName,
+            durationSec: newMsg.durationSec,
+            asrText: cleanText,
+            autoPlay,
+          }),
+        }).catch(() => {});
       },
 
       markMessagePlayed: msgId => {
         set(s => ({
           messages: s.messages.map(m => (m.id === msgId ? { ...m, status: 'played' } : m)),
         }));
+        fetch('/api/v1/chat/messages', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: msgId }),
+        }).catch(() => {});
+      },
+
+      syncMessagesFromServer: async () => {
+        try {
+          const deviceId = get().selectedDeviceId || 'all';
+          const res = await fetch(
+            `/api/v1/chat/messages?deviceId=${encodeURIComponent(deviceId)}`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          if (Array.isArray(data.messages)) {
+            set(s => ({
+              messages: data.messages.map((m: any) => {
+                const existing = s.messages.find(local => local.id === m.id);
+                return {
+                  id: m.id,
+                  familyId: s.family.id,
+                  deviceId: m.deviceId,
+                  childId: s.children[0]?.id,
+                  direction: m.direction,
+                  senderName: m.senderName,
+                  audioUrl: existing?.audioUrl || m.audioUrl || '',
+                  durationSec: m.durationSec,
+                  asrText: m.asrText,
+                  autoPlay: Boolean(m.autoPlay),
+                  status: m.status,
+                  createdAt: m.createdAt,
+                };
+              }),
+            }));
+          }
+        } catch {
+          // ignore
+        }
       },
 
       addSchedule: draft => {
         const state = get();
+        const id = `sched_${Date.now()}`;
+        const deviceId = state.selectedDeviceId || 'default';
         const newSched: VoiceSchedule = {
           ...draft,
-          id: `sched-${Date.now()}`,
+          id,
           familyId: state.family.id,
-          deviceId: state.selectedDeviceId,
+          deviceId,
           childId: state.children[0]?.id,
           lastAckStatus: 'idle',
           lastAckAt: null,
           createdAt: new Date().toISOString(),
         };
         set(s => ({ schedules: [newSched, ...s.schedules] }));
+        fetch('/api/v1/schedules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newSched),
+        }).catch(() => {});
       },
 
       updateSchedule: (id, updates) => {
+        let merged: VoiceSchedule | undefined;
         set(s => ({
-          schedules: s.schedules.map(item =>
-            item.id === id ? { ...item, ...updates, updatedAt: new Date().toISOString() } : item
-          ),
+          schedules: s.schedules.map(item => {
+            if (item.id === id) {
+              merged = { ...item, ...updates, updatedAt: new Date().toISOString() };
+              return merged;
+            }
+            return item;
+          }),
         }));
+        if (merged) {
+          fetch('/api/v1/schedules', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(merged),
+          }).catch(() => {});
+        }
       },
 
       toggleSchedule: id => {
+        let nextEnabled: boolean | undefined;
         set(s => ({
-          schedules: s.schedules.map(item =>
-            item.id === id ? { ...item, enabled: !item.enabled } : item
-          ),
+          schedules: s.schedules.map(item => {
+            if (item.id === id) {
+              nextEnabled = !item.enabled;
+              return { ...item, enabled: nextEnabled };
+            }
+            return item;
+          }),
         }));
+        fetch('/api/v1/schedules', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, enabled: nextEnabled }),
+        }).catch(() => {});
       },
 
       deleteSchedule: id => {
         set(s => ({
           schedules: s.schedules.filter(item => item.id !== id),
         }));
+        fetch(`/api/v1/schedules?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
+          () => {}
+        );
+      },
+
+      syncSchedulesFromServer: async () => {
+        try {
+          const deviceId = get().selectedDeviceId || 'all';
+          const res = await fetch(
+            `/api/v1/schedules?deviceId=${encodeURIComponent(deviceId)}`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          if (Array.isArray(data.schedules)) {
+            set(s => ({
+              schedules: data.schedules.map((rs: any) => ({
+                ...rs,
+                familyId: s.family.id,
+                childId: s.children[0]?.id,
+              })),
+            }));
+          }
+        } catch {
+          // ignore
+        }
       },
 
       updatePetConfig: updates => {
-        set(s => ({
-          petConfig: {
-            ...s.petConfig,
-            ...updates,
-            updatedAt: new Date().toISOString(),
-          },
-        }));
+        const state = get();
+        const deviceId = state.selectedDeviceId || 'default';
+        const nextConfig = {
+          ...state.petConfig,
+          ...updates,
+          updatedAt: new Date().toISOString(),
+        };
+        set({ petConfig: nextConfig });
+        fetch('/api/v1/pet-ai', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId,
+            petName: nextConfig.petName,
+            personaId: nextConfig.personaId,
+            voiceId: nextConfig.voiceId,
+            customPrompt: nextConfig.customPrompt,
+            volumeLevel: nextConfig.volumeLevel,
+          }),
+        }).catch(() => {});
+      },
+
+      syncPetAiFromServer: async () => {
+        try {
+          const deviceId = get().selectedDeviceId || 'default';
+          const res = await fetch(
+            `/api/v1/pet-ai?deviceId=${encodeURIComponent(deviceId)}`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          set(s => ({
+            petConfig: data.config
+              ? {
+                  ...s.petConfig,
+                  petName: data.config.petName || s.petConfig.petName,
+                  personaId: data.config.personaId || s.petConfig.personaId,
+                  voiceId: data.config.voiceId || s.petConfig.voiceId,
+                  customPrompt: data.config.customPrompt || s.petConfig.customPrompt,
+                  volumeLevel: data.config.volumeLevel ?? s.petConfig.volumeLevel,
+                  updatedAt: data.config.updatedAt || s.petConfig.updatedAt,
+                }
+              : s.petConfig,
+            aiLogs: Array.isArray(data.logs) ? data.logs : s.aiLogs,
+          }));
+        } catch {
+          // ignore
+        }
       },
 
       addDevice: async (deviceIdInput, alias, childNickname) => {

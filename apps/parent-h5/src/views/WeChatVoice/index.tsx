@@ -16,15 +16,18 @@ export const WeChatVoicePage: React.FC = () => {
     sendParentVoiceMessage,
     markMessagePlayed,
     syncDevicesFromServer,
+    syncMessagesFromServer,
   } = useAppStore();
 
   useEffect(() => {
     void syncDevicesFromServer();
+    void syncMessagesFromServer();
     const timer = window.setInterval(() => {
       void syncDevicesFromServer();
-    }, 15000);
+      void syncMessagesFromServer();
+    }, 10000);
     return () => clearInterval(timer);
-  }, [syncDevicesFromServer]);
+  }, [syncDevicesFromServer, syncMessagesFromServer]);
 
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
   const [autoPlayOnDevice, setAutoPlayOnDevice] = useState(false);

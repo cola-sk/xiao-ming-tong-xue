@@ -1,5 +1,5 @@
 import 'server-only';
-import { neon } from '@neondatabase/serverless';
+import { ensureNeonSchema, getNeonSql } from './neonDb';
 
 export interface DeviceRecord {
   id: string;
@@ -20,37 +20,6 @@ const ONLINE_TTL_MS = 60 * 1000; // 60 秒内收到过 ESP32 心跳则判定为�
 
 // 仅当未配置 DATABASE_URL 时使用的内存兜底
 const memoryDeviceMap = new Map<string, DeviceRecord>();
-let tableInitialized = false;
-
-function getSql() {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
-  if (!url) return null;
-  return neon(url);
-}
-
-async function ensureDevicesTable() {
-  if (tableInitialized) return;
-  const sql = getSql();
-  if (!sql) return;
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS devices (
-      id TEXT PRIMARY KEY,
-      alias TEXT NOT NULL DEFAULT '小铭同学',
-      child_nickname TEXT NOT NULL DEFAULT '宝贝',
-      device_model TEXT NOT NULL DEFAULT 'Waveshare ESP32-S3-Touch-AMOLED-2.16',
-      mac_address TEXT NOT NULL DEFAULT '',
-      firmware_version TEXT NOT NULL DEFAULT '1.0.0',
-      battery_percent INTEGER NOT NULL DEFAULT 0,
-      wifi_rssi INTEGER NOT NULL DEFAULT 0,
-      volume_level INTEGER NOT NULL DEFAULT 80,
-      last_seen_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `;
-  tableInitialized = true;
-}
 
 function computeIsOnline(lastSeenAt: string | Date | null | undefined): boolean {
   if (!lastSeenAt) return false;
@@ -89,11 +58,11 @@ export async function upsertDeviceHeartbeat(params: {
   batteryPercent?: number;
   wifiRssi?: number;
 }): Promise<DeviceRecord> {
-  const sql = getSql();
+  const sql = getNeonSql();
   const nowIso = new Date().toISOString();
 
   if (sql) {
-    await ensureDevicesTable();
+    await ensureNeonSchema();
     const rows = await sql`
       INSERT INTO devices (
         id,
@@ -151,11 +120,11 @@ export async function registerDeviceFromParent(params: {
   alias: string;
   childNickname: string;
 }): Promise<DeviceRecord> {
-  const sql = getSql();
+  const sql = getNeonSql();
   const nowIso = new Date().toISOString();
 
   if (sql) {
-    await ensureDevicesTable();
+    await ensureNeonSchema();
     const rows = await sql`
       INSERT INTO devices (
         id,
@@ -202,10 +171,10 @@ export async function updateDeviceVolume(
   volumeLevel: number
 ): Promise<DeviceRecord | null> {
   const clamped = Math.max(10, Math.min(100, Math.round(volumeLevel)));
-  const sql = getSql();
+  const sql = getNeonSql();
 
   if (sql) {
-    await ensureDevicesTable();
+    await ensureNeonSchema();
     const rows = await sql`
       UPDATE devices
       SET volume_level = ${clamped}, updated_at = NOW()
@@ -227,9 +196,9 @@ export async function updateDeviceVolume(
  * 获取所有设备列表及真实实时在线状态
  */
 export async function listDevicesWithStatus(): Promise<DeviceRecord[]> {
-  const sql = getSql();
+  const sql = getNeonSql();
   if (sql) {
-    await ensureDevicesTable();
+    await ensureNeonSchema();
     const rows = await sql`
       SELECT * FROM devices ORDER BY created_at ASC
     `;
@@ -246,9 +215,9 @@ export async function listDevicesWithStatus(): Promise<DeviceRecord[]> {
  * 解绑/删除设备
  */
 export async function deleteDeviceById(deviceId: string): Promise<void> {
-  const sql = getSql();
+  const sql = getNeonSql();
   if (sql) {
-    await ensureDevicesTable();
+    await ensureNeonSchema();
     await sql`DELETE FROM devices WHERE id = ${deviceId}`;
     return;
   }
