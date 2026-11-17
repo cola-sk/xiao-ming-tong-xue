@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Switch, Toast } from 'antd-mobile';
+import { Switch, Toast, Dialog } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { ChatVoiceMessage } from '../../services/types';
 import { IconMic, IconVolume, IconBattery, IconWifi } from '../../components/Icons';
@@ -56,7 +56,8 @@ export const WeChatVoicePage: React.FC = () => {
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
   const [autoPlayOnDevice, setAutoPlayOnDevice] = useState(false);
   const [playingId, setPlayingId] = useState<string>('');
-  const [isRecording, setIsRecording] = useState(false);
+  const [recordState, setRecordState] = useState<'idle' | 'starting' | 'recording' | 'sending'>('idle');
+  const isRecording = recordState === 'recording';
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [textInput, setTextInput] = useState('');
   const [senderRole, setSenderRole] = useState<'妈妈' | '爸爸'>('妈妈');
@@ -75,6 +76,34 @@ export const WeChatVoicePage: React.FC = () => {
 
   const timerRef = useRef<number | null>(null);
   const wavRecorderRef = useRef<WavRecorderHandle | null>(null);
+  const mountedRef = useRef(false);
+  const startRef = useRef(false);
+  const recordStartedAt = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const stopOnBackground = () => {
+      if (document.visibilityState !== 'hidden') return;
+      const recorder = wavRecorderRef.current;
+      wavRecorderRef.current = null;
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      if (recorder) {
+        void recorder.cancel();
+        setRecordState('idle');
+      }
+    };
+    document.addEventListener('visibilitychange', stopOnBackground);
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener('visibilitychange', stopOnBackground);
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      const recorder = wavRecorderRef.current;
+      wavRecorderRef.current = null;
+      if (recorder) void recorder.cancel();
+    };
+  }, []);
 
   const handlePlayBubble = async (msg: ChatVoiceMessage) => {
     if (playingId) return;
@@ -83,7 +112,11 @@ export const WeChatVoicePage: React.FC = () => {
       // 1) 优先从家长端本地 IndexedDB 读取已缓存的双向原声录音
       const localUrl = await getLocalChatAudioUrl(msg.id);
       if (localUrl) {
-        await playRecordedAudio(localUrl);
+        try {
+          await playRecordedAudio(localUrl);
+        } finally {
+          URL.revokeObjectURL(localUrl);
+        }
       } else if (msg.audioUrl) {
         // 2) 若在云端中转队列中：先拉取 WAV 存入本地 IndexedDB，再播放并标记已读以释放云端中转
         try {
@@ -124,56 +157,72 @@ export const WeChatVoicePage: React.FC = () => {
     }
   };
 
-  const startHoldRecord = async () => {
-    if (isRecording) return;
+  const startRecord = async () => {
+    if (startRef.current || recordState !== 'idle') return;
+    startRef.current = true;
+    setRecordState('starting');
     try {
-      const handle = await startWavRecorder();
-      wavRecorderRef.current = handle;
-      setIsRecording(true);
-      setRecordSeconds(1);
-
+      const recorder = await startWavRecorder();
+      if (!mountedRef.current || document.visibilityState !== 'visible') {
+        await recorder.cancel();
+        if (mountedRef.current) setRecordState('idle');
+        return;
+      }
+      wavRecorderRef.current = recorder;
+      recordStartedAt.current = Date.now();
+      setRecordSeconds(0);
+      setRecordState('recording');
       timerRef.current = window.setInterval(() => {
-        setRecordSeconds(prev => prev + 1);
-      }, 1000);
+        setRecordSeconds(Math.floor((Date.now() - recordStartedAt.current) / 1000));
+      }, 250);
     } catch {
-      Toast.show({ icon: 'fail', content: '无法访问麦克风，请允许浏览器麦克风权限或直接输入文字发送' });
+      if (mountedRef.current) {
+        setRecordState('idle');
+        Toast.show({ icon: 'fail', content: '无法访问麦克风，请允许浏览器麦克风权限后重试' });
+      }
+    } finally {
+      startRef.current = false;
     }
   };
 
-  const stopHoldRecordAndSend = async () => {
-    if (!isRecording) return;
-    setIsRecording(false);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    const duration = Math.max(1, recordSeconds);
+  const finishRecord = async (send: boolean) => {
     const recorder = wavRecorderRef.current;
-    wavRecorderRef.current = null;
     if (!recorder) return;
-
-    const { blob, base64, url } = await recorder.stop();
-    const content = textInput.trim() || `（${duration}秒原声语音）`;
+    wavRecorderRef.current = null;
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+    const durationMs = Date.now() - recordStartedAt.current;
+    if (!send || durationMs < 1000) {
+      setRecordState('idle');
+      await recorder.cancel();
+      if (send && mountedRef.current) Toast.show({ content: '录音太短，请说话至少 1 秒' });
+      return;
+    }
+    setRecordState('sending');
+    let url = '';
     try {
-    await sendParentVoiceMessage({
-      senderName: senderRole,
-      asrText: content,
-      durationSec: duration,
-      autoPlay: autoPlayOnDevice,
-      audioUrl: url,
-      audioBlob: blob,
-      audioBase64: base64,
-      audioMime: 'audio/wav',
-    });
-    refreshLocalStats();
-    setTextInput('');
-    Toast.show({
-      icon: 'success',
-      content: 'WAV 原声已上传，等待设备同步',
-    });
+      const recording = await recorder.stop();
+      url = recording.url;
+      const duration = Math.max(1, Math.ceil(durationMs / 1000));
+      await sendParentVoiceMessage({
+        senderName: senderRole,
+        asrText: textInput.trim() || `（${duration}秒原声语音）`,
+        durationSec: duration,
+        autoPlay: autoPlayOnDevice,
+        audioBlob: recording.blob,
+        audioBase64: recording.base64,
+        audioMime: 'audio/wav',
+      });
+      if (mountedRef.current) {
+        refreshLocalStats();
+        setTextInput('');
+        Toast.show({ icon: 'success', content: '语音已发送，等待设备同步' });
+      }
     } catch {
-      Toast.show({ content: '发送失败，请重试' });
+      if (mountedRef.current) Toast.show({ content: '发送失败，请重新录音' });
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      if (mountedRef.current) setRecordState('idle');
     }
   };
 
@@ -274,13 +323,17 @@ export const WeChatVoicePage: React.FC = () => {
               <button
                 type="button"
                 onClick={async () => {
-                  await clearLocalChatAudio();
-                  refreshLocalStats();
-                  Toast.show({ content: '已清理浏览器本地微聊语音缓存' });
+                  try {
+                    await clearLocalChatAudio();
+                    refreshLocalStats();
+                    Toast.show({ content: '已清理本机语音缓存，聊天记录仍保留' });
+                  } catch {
+                    Toast.show({ icon: 'fail', content: '清理失败，请重试' });
+                  }
                 }}
                 className="text-[#B96043] underline"
               >
-                清理
+                清理音频
               </button>
             )}
           </div>
@@ -289,7 +342,7 @@ export const WeChatVoicePage: React.FC = () => {
         <div className="space-y-3">
           {messages.length === 0 ? (
             <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
-              暂无亲子微聊语音记录，按住下方说话给宝贝发第一条语音吧
+              暂无亲子微聊语音记录，点击下方录音给宝贝发送语音
             </div>
           ) : (
             messages.map(msg => {
@@ -395,40 +448,37 @@ export const WeChatVoicePage: React.FC = () => {
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-[#8B8A80]">
-            {isRecording ? `正在录音 ${recordSeconds}s (松手即发送)...` : '支持按住说话或输入文字转语音'}
+          <span className="text-[11px] text-[#8B8A80]" aria-live="polite">
+            {isRecording ? `正在录音 ${recordSeconds}s` : recordState === 'starting' ? '正在开启麦克风…' : recordState === 'sending' ? '正在发送…' : '支持录音或输入文字转语音'}
           </span>
         </div>
 
-        <form onSubmit={handleQuickTextVoiceSend} className="flex items-center gap-2">
-          <input
-            type="text"
-            value={textInput}
-            onChange={e => setTextInput(e.target.value)}
-            placeholder="输入内容或备注（可留空直接按住录音）"
-            className="kid-input flex-1"
-            maxLength={120}
-          />
-          {textInput.trim() ? (
-            <button type="submit" className="kid-btn kid-btn-primary kid-btn-md shrink-0">
-              发送语音
-            </button>
-          ) : (
-            <button
-              type="button"
-              onMouseDown={startHoldRecord}
-              onMouseUp={stopHoldRecordAndSend}
-              onTouchStart={startHoldRecord}
-              onTouchEnd={stopHoldRecordAndSend}
-              className={`kid-btn kid-btn-md shrink-0 ${
-                isRecording ? 'kid-btn-secondary scale-95' : 'kid-btn-primary'
-              }`}
-            >
-              <IconMic className="w-4 h-4" />
-              <span>{isRecording ? '松开 立即发送' : '按住 说话'}</span>
-            </button>
-          )}
-        </form>
+        {isRecording ? (
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => void finishRecord(false)} className="kid-btn kid-btn-ghost kid-btn-md flex-1">取消录音</button>
+            <button type="button" onClick={() => void finishRecord(true)} className="kid-btn kid-btn-primary kid-btn-md flex-1">结束并发送</button>
+          </div>
+        ) : (
+          <form onSubmit={handleQuickTextVoiceSend} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={textInput}
+              onChange={e => setTextInput(e.target.value)}
+              placeholder="输入内容或点击录音"
+              className="kid-input flex-1 min-w-0"
+              maxLength={120}
+              disabled={recordState !== 'idle'}
+            />
+            {textInput.trim() ? (
+              <button type="submit" disabled={recordState !== 'idle'} className="kid-btn kid-btn-primary kid-btn-md shrink-0">发送语音</button>
+            ) : (
+              <button type="button" disabled={recordState !== 'idle'} onClick={() => void startRecord()} className="kid-btn kid-btn-primary kid-btn-md shrink-0">
+                <IconMic className="w-4 h-4" />
+                <span>{recordState === 'starting' ? '开启中…' : recordState === 'sending' ? '发送中…' : '点击录音'}</span>
+              </button>
+            )}
+          </form>
+        )}
       </section>
     </div>
   );

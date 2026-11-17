@@ -143,16 +143,16 @@ export async function getLocalChatAudioStats(): Promise<{ count: number; totalBy
  * 清空家长端本地微聊语音缓存
  */
 export async function clearLocalChatAudio(): Promise<void> {
+  const db = await openAudioDb();
   try {
-    const db = await openAudioDb();
-    await new Promise<void>(resolve => {
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       tx.objectStore(STORE_NAME).clear();
       tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('清理失败'));
+      tx.onabort = () => reject(tx.error || new Error('清理已取消'));
     });
+  } finally {
     db.close();
-  } catch {
-    // ignore
   }
 }

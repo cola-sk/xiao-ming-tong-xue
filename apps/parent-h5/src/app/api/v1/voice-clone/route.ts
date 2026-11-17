@@ -56,6 +56,26 @@ export async function POST(request: NextRequest) {
   }
   if (!isDoubaoConfigured()) return NextResponse.json({ error: '服务端尚未配置豆包语音密钥' }, { status: 503 });
 
+  const profileId = typeof body.profileId === 'string' ? body.profileId : '';
+  let existing;
+  try {
+    const profiles = await listVoiceCloneProfiles();
+    existing = profiles.find(profile => profile.providerVoiceId === speakerId);
+    if (profileId && (!existing || existing.id !== profileId)) {
+      return NextResponse.json({ error: '音色档案不存在或不匹配，请刷新后重试' }, { status: 400 });
+    }
+    if (!profileId && existing) {
+      return NextResponse.json({ error: '该音色已在列表中，请使用重新复刻' }, { status: 409 });
+    }
+    if (profileId) {
+      const current = await getDoubaoVoiceCloneStatus(speakerId);
+      if (current.status === 4) return NextResponse.json({ error: '此音色已激活，不能重新复刻' }, { status: 409 });
+      if (current.status === 1) return NextResponse.json({ error: '此音色正在训练，请稍后重试' }, { status: 409 });
+    }
+  } catch {
+    return NextResponse.json({ error: '无法确认音色状态，请稍后重试' }, { status: 503 });
+  }
+
   let result: Awaited<ReturnType<typeof uploadDoubaoVoiceClone>>;
   try {
     result = await uploadDoubaoVoiceClone({ speakerId, audioBase64, audioFormat });
@@ -65,6 +85,7 @@ export async function POST(request: NextRequest) {
   }
   try {
     const profile = await saveVoiceCloneProfile({
+      id: existing?.id,
       speakerRole,
       title: typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 30) : `${speakerRole}的声音`,
       sampleText: typeof body.sampleText === 'string' ? body.sampleText.trim().slice(0, 500) : '',

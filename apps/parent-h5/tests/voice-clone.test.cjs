@@ -121,3 +121,26 @@ test('TTS rejects an unready clone before generating audio', async () => {
   const response = await api.POST(request({ text: '你好', voiceType: 'S_valid123', isClonedVoice: true }));
   assert.equal(response.status, 409); assert.equal(syntheses, 0);
 });
+
+test('retraining keeps the existing profile identity and prevents duplicate new profiles', async () => {
+  let saved;
+  const profile = { id: 'original', providerVoiceId: 'S_valid123', status: 'ready' };
+  const api = route({ getDoubaoVoiceCloneStatus: async speakerId => ({ speakerId, status: 2 }) }, {
+    listVoiceCloneProfiles: async () => [profile],
+    saveVoiceCloneProfile: async p => { saved = p; return p; },
+  });
+  assert.equal((await api.POST(request(base))).status, 409);
+  const result = await api.POST(request({ ...base, profileId: 'original' }));
+  assert.equal(result.status, 200);
+  assert.equal(saved.id, 'original');
+  assert.equal(saved.status, 'training');
+});
+
+test('retraining an activated voice never uploads a replacement', async () => {
+  let uploads = 0;
+  const api = route({ getDoubaoVoiceCloneStatus: async () => ({ status: 4 }), uploadDoubaoVoiceClone: async () => { uploads++; } }, {
+    listVoiceCloneProfiles: async () => [{ id: 'original', providerVoiceId: 'S_valid123' }],
+  });
+  assert.equal((await api.POST(request({ ...base, profileId: 'original' }))).status, 409);
+  assert.equal(uploads, 0);
+});

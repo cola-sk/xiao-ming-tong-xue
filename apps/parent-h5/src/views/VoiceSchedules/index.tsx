@@ -139,7 +139,7 @@ export const VoiceSchedulesPage: React.FC = () => {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <IconSparkle className="w-4 h-4 text-[#B96043] shrink-0" />
-            <h3 className="text-h3 text-[#242620]">爸妈声音克隆工坊</h3>
+            <h3 className="text-h3 text-[#242620]">我的声音</h3>
             <span className="kid-status-chip kid-status-new">已克隆 {voiceClones.length} 个音色</span>
           </div>
           <p className="text-xs text-[#77786F] mt-1">
@@ -152,7 +152,7 @@ export const VoiceSchedulesPage: React.FC = () => {
           className="kid-btn kid-btn-secondary kid-btn-sm shrink-0"
         >
           <IconMic className="w-3.5 h-3.5" />
-          <span>去录克隆音</span>
+          <span>管理声音</span>
         </button>
       </div>
 

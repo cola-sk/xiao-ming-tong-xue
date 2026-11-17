@@ -6,6 +6,7 @@
 
 export interface WavRecorderHandle {
   stop: () => Promise<{ blob: Blob; base64: string; url: string; format: 'wav' }>;
+  cancel: () => Promise<void>;
 }
 
 function encodeWAV(samples: Float32Array, sampleRate: number): ArrayBuffer {
@@ -74,13 +75,26 @@ export async function startWavRecorder(): Promise<WavRecorderHandle> {
   source.connect(processor);
   processor.connect(audioCtx.destination);
 
+  let stopped = false;
+  const close = async () => {
+    if (stopped) return;
+    stopped = true;
+    processor.onaudioprocess = null;
+    processor.disconnect();
+    source.disconnect();
+    stream.getTracks().forEach(t => t.stop());
+    await audioCtx.close().catch(() => {});
+  };
+
   return {
+    cancel: async () => {
+      await close();
+      chunks.length = 0;
+    },
     stop: async () => {
-      processor.disconnect();
-      source.disconnect();
-      stream.getTracks().forEach(t => t.stop());
+      if (stopped) throw new Error('录音已经结束');
       const sampleRate = audioCtx.sampleRate || 24000;
-      await audioCtx.close().catch(() => {});
+      await close();
 
       const totalLength = chunks.reduce((acc, cur) => acc + cur.length, 0);
       const merged = new Float32Array(totalLength);

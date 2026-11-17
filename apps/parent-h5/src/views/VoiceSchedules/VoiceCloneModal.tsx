@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Popup, Toast } from 'antd-mobile';
+import { Popup, Toast, Dialog } from 'antd-mobile';
 import { DeleteOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
 import { VoiceCloneProfile } from '../../services/types';
@@ -31,6 +31,10 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
     syncVoiceClonesFromServer,
   } = useAppStore();
 
+  const [mode, setMode] = useState<'list' | 'create' | 'retrain'>('list');
+  const [editingProfile, setEditingProfile] = useState<VoiceCloneProfile | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [speakerRole, setSpeakerRole] = useState<'妈妈' | '爸爸'>('妈妈');
   const [title, setTitle] = useState('妈妈的温柔声音');
   const [speakerIdInput, setSpeakerIdInput] = useState('');
@@ -49,16 +53,33 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
   const timerRef = useRef<number | null>(null);
   const wavRecorderRef = useRef<WavRecorderHandle | null>(null);
 
+  const loadProfiles = async () => {
+    try {
+      const response = await fetch('/api/v1/voice-clone', { cache: 'no-store' });
+      if (!response.ok) throw new Error('音色列表加载失败');
+      const data = await response.json();
+      if (!Array.isArray(data.profiles)) throw new Error('音色列表格式无效');
+      useAppStore.setState(state => ({
+        voiceClones: data.profiles.map((profile: VoiceCloneProfile) => ({
+          ...profile, familyId: state.family.id,
+        })),
+      }));
+      setDoubaoConfigured(Boolean(data.configured));
+      setLoadError(false);
+      setProfilesLoaded(true);
+    } catch {
+      setLoadError(true);
+    }
+  };
+
   useEffect(() => {
     if (!visible) return;
-    void syncVoiceClonesFromServer();
-    fetch('/api/v1/voice-clone')
-      .then(r => r.json())
-      .then(data => {
-        setDoubaoConfigured(Boolean(data.configured));
-      })
-      .catch(() => setDoubaoConfigured(false));
-  }, [visible, syncVoiceClonesFromServer]);
+    setMode('list');
+    setProfilesLoaded(false);
+    void loadProfiles();
+  // Refresh when opening the manager.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -67,7 +88,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       timerRef.current = null;
       const recorder = wavRecorderRef.current;
       wavRecorderRef.current = null;
-      if (recorder) void recorder.stop().then(result => URL.revokeObjectURL(result.url)).catch(() => {});
+      if (recorder) void recorder.cancel().catch(() => {});
       setIsRecording(false);
     };
   }, [visible]);
@@ -87,6 +108,26 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
     }, 15000);
     return () => { disposed = true; window.clearInterval(timer); };
   }, [visible, voiceClones, syncVoiceClonesFromServer]);
+
+  const openCreate = () => {
+    setEditingProfile(null);
+    setSpeakerRole('妈妈');
+    setTitle('妈妈的温柔声音');
+    setSpeakerIdInput('');
+    setRecordedWavUrl('');
+    setRecordedWavBase64('');
+    setMode('create');
+  };
+
+  const openRetrain = (profile: VoiceCloneProfile) => {
+    setEditingProfile(profile);
+    setSpeakerRole(profile.speakerRole === '爸爸' ? '爸爸' : '妈妈');
+    setTitle(profile.title);
+    setSpeakerIdInput(profile.providerVoiceId);
+    setRecordedWavUrl('');
+    setRecordedWavBase64('');
+    setMode('retrain');
+  };
 
   const handleSelectRole = (role: '妈妈' | '爸爸') => {
     setSpeakerRole(role);
@@ -178,6 +219,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         body: JSON.stringify({
           speakerRole,
           title,
+          profileId: editingProfile?.id,
           speakerId: resolvedSpeakerId,
           audioBase64: recordedWavBase64,
           audioFormat,
@@ -203,9 +245,11 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       setRecordedWavUrl('');
       setRecordedWavBase64('');
       setSpeakerIdInput('');
+      setMode('list');
+      void syncVoiceClonesFromServer();
       Toast.show({
         icon: 'success',
-        content: `已上传至火山引擎豆包声音复刻（音色 ID: ${finalVoiceId}）！`,
+        content: editingProfile ? '已提交重新复刻，请等待训练完成' : '已提交复刻，请等待训练完成',
       });
     } catch {
       Toast.show({ icon: 'fail', content: '连接失败，请先查询音色状态后再决定是否重试' });
@@ -289,7 +333,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
         {/* Header */}
         <div className="px-4 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] flex items-center justify-between">
           <div>
-            <h3 className="text-h2 text-[#1F2937]">火山引擎豆包 · 爸妈声音复刻工坊</h3>
+            <h3 className="text-h2 text-[#1F2937]">{mode === 'list' ? '我的声音' : mode === 'create' ? '新建声音' : '重新复刻声音'}</h3>
             <p className="text-[11px] text-[#6B7280]">
               录制样本并训练专属音色
             </p>
@@ -311,18 +355,19 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
           )}
 
           {/* 1. 已复刻的爸妈音色库 */}
-          <div className="kid-card space-y-2.5">
+          {mode === 'list' && <div className="kid-card space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-caption font-bold text-[#1F2937]">
-                已绑定的爸妈克隆音色 ({voiceClones.length})
+                我的声音 ({voiceClones.length})
               </span>
-
+              <button type="button" onClick={openCreate} className="kid-btn kid-btn-primary kid-btn-sm">新建声音</button>
             </div>
+            {loadError && <div role="alert" className="text-xs text-red-600">音色列表加载失败，请检查网络。 <button type="button" onClick={() => void loadProfiles()} className="underline">重新加载</button></div>}
 
             <div className="space-y-2">
-              {voiceClones.length === 0 ? (
+              {!profilesLoaded && !loadError ? <div className="text-center py-5 text-xs text-[#8B8A80]">正在加载声音…</div> : voiceClones.length === 0 && !loadError ? (
                 <div className="text-center py-5 text-xs text-[#8B8A80] bg-[#FAF8F5] rounded-xl border border-dashed border-[#E8D9C8]">
-                  暂无绑定的爸妈音色，请在下方录制或上传原声音频进行豆包声音复刻
+                  暂无声音，点击“新建声音”开始复刻
                 </div>
               ) : (
                 voiceClones.map(vc => (
@@ -359,6 +404,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                           {synthesizingId === vc.id ? '豆包合成中…' : '豆包TTS合成试听'}
                         </span>
                       </button>
+                      <button type="button" disabled={vc.status === 'training'} onClick={() => openRetrain(vc)} className="kid-btn kid-btn-ghost kid-btn-sm !text-[11px]">重新复刻</button>
                       <button
                         type="button"
                         onClick={() => void deleteVoiceCloneProfile(vc.id).catch(() => Toast.show({ icon: 'fail', content: '删除失败，请重试' }))}
@@ -388,14 +434,16 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                 />
               </div>
             )}
-          </div>
+          </div>}
 
           {/* 2. 录制并上传新声音复刻 */}
-          <div className="kid-card-highlight space-y-3">
+          {mode !== 'list' && <div className="kid-card-highlight space-y-3">
+            <button type="button" onClick={() => setMode('list')} className="kid-btn kid-btn-ghost kid-btn-sm">← 返回我的声音</button>
+            {mode === 'retrain' && <p className="text-xs text-[#9B742F]">将更新此音色并消耗一次训练机会。已有定时任务音频不会自动更新，需要重新保存任务。</p>}
             <div className="flex items-center justify-between">
               <span className="text-h3 text-[#242620] inline-flex items-center gap-1.5">
                 <IconSparkle className="w-4 h-4 text-[#B96043]" />
-                <span>上传原声训练豆包复刻音色</span>
+                <span>{mode === 'create' ? '录制样本创建声音' : '录制新样本更新声音'}</span>
               </span>
               <div className="flex gap-1.5">
                 {(['妈妈', '爸爸'] as const).map(role => (
@@ -432,6 +480,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                   type="text"
                   value={speakerIdInput}
                   onChange={e => setSpeakerIdInput(e.target.value)}
+                  readOnly={mode === 'retrain'}
                   placeholder="在火山引擎控制台获取 S_ 开头的音色 ID"
                   className="kid-input font-mono"
                 />
@@ -497,22 +546,28 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                 </button>
               </div>
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-[#F9FAFB] border-t border-[#E5E7EB] shrink-0">
+        {mode !== 'list' && <div className="p-4 bg-[#F9FAFB] border-t border-[#E5E7EB] shrink-0">
           <button
             type="button"
             disabled={isCloning || !recordedWavBase64 || !speakerIdInput.trim()}
-            onClick={handleSubmitClone}
+            onClick={() => {
+              if (mode === 'retrain') {
+                void Dialog.confirm({ title: '重新复刻这个声音？', content: '将使用新录音更新该音色并消耗一次训练机会；已有定时音频不会自动更新。', confirmText: '确认复刻', cancelText: '取消', onConfirm: handleSubmitClone });
+              } else {
+                void handleSubmitClone();
+              }
+            }}
             className="w-full kid-btn kid-btn-primary kid-btn-lg"
           >
             {isCloning
               ? '正在上传音频至豆包 MegaTTS 训练…'
-              : '上传音频至火山引擎豆包进行声音复刻'}
+              : mode === 'retrain' ? '提交并更新声音' : '创建声音'}
           </button>
-        </div>
+        </div>}
       </div>
     </Popup>
   );

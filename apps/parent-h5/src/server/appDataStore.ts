@@ -251,7 +251,9 @@ export async function saveVoiceCloneProfile(params: {
         ${record.id}, ${record.speakerRole}, ${record.title}, ${record.sampleText}, ${record.providerVoiceId}, ${record.status}
       )
       ON CONFLICT (id) DO UPDATE SET
+        speaker_role = EXCLUDED.speaker_role,
         title = EXCLUDED.title,
+        sample_text = EXCLUDED.sample_text,
         provider_voice_id = EXCLUDED.provider_voice_id,
         status = EXCLUDED.status
     `;

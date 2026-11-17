@@ -164,7 +164,8 @@ export async function synthesizeDoubaoTts(params: {
   const shouldPersist = Boolean(params.persist);
 
   // 1) 仅当开启持久化 (persist = true，即定时语音任务) 时，才查询数据库是否已有缓存音频
-  if (shouldPersist) {
+  // Retraining can change a clone without changing its speaker ID.
+  if (shouldPersist && !speaker.startsWith('S_')) {
     const existing = await findExistingAudioByText(speaker, params.text);
     if (existing) {
       return {
