@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Switch, Toast, Popup } from 'antd-mobile';
+import { Switch, Toast } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { ChatVoiceMessage } from '../../services/types';
-import { IconMic, IconVolume, IconBattery, IconWifi, IconSparkle } from '../../components/Icons';
+import { IconMic, IconVolume, IconBattery, IconWifi } from '../../components/Icons';
 import { playAudioOrFallback } from '../../utils/voiceSynth';
 
 export const WeChatVoicePage: React.FC = () => {
@@ -14,7 +14,6 @@ export const WeChatVoicePage: React.FC = () => {
     selectedDeviceId,
     petConfig,
     sendParentVoiceMessage,
-    sendDeviceVoiceMessage,
     markMessagePlayed,
   } = useAppStore();
 
@@ -25,8 +24,6 @@ export const WeChatVoicePage: React.FC = () => {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [textInput, setTextInput] = useState('');
   const [senderRole, setSenderRole] = useState<'妈妈' | '爸爸'>('妈妈');
-  const [simChildPopupOpen, setSimChildPopupOpen] = useState(false);
-  const [simChildText, setSimChildText] = useState('妈妈，我做完作业啦，你什么时候回来呀？');
 
   const timerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -130,18 +127,6 @@ export const WeChatVoicePage: React.FC = () => {
     });
   };
 
-  const handleSimulateChildReply = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!simChildText.trim()) return;
-    const duration = Math.max(2, Math.min(12, Math.ceil(simChildText.trim().length / 4)));
-    sendDeviceVoiceMessage({
-      asrText: simChildText.trim(),
-      durationSec: duration,
-    });
-    setSimChildPopupOpen(false);
-    Toast.show({ icon: 'success', content: '收到宝贝从 ESP32 设备发来的新语音！' });
-  };
-
   return (
     <div className="px-3.5 pt-3 pb-28 space-y-3.5 text-[#1F2937]">
       {/* 顶部设备在线与电量卡片 */}
@@ -166,15 +151,6 @@ export const WeChatVoicePage: React.FC = () => {
               </span>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setSimChildPopupOpen(true)}
-            className="kid-btn kid-btn-ghost kid-btn-sm shrink-0"
-          >
-            <IconSparkle className="w-3.5 h-3.5 text-[#B96043]" />
-            <span>模拟宝贝回语音</span>
-          </button>
         </div>
 
         {/* 家长发送模式设置 */}
@@ -205,7 +181,12 @@ export const WeChatVoicePage: React.FC = () => {
         </div>
 
         <div className="space-y-3">
-          {messages.map(msg => {
+          {messages.length === 0 ? (
+            <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
+              暂无亲子微聊语音记录，按住下方说话给宝贝发第一条语音吧
+            </div>
+          ) : (
+            messages.map(msg => {
             const isParent = msg.direction === 'parent_to_device';
             const isPlaying = playingId === msg.id;
             const isUnread = msg.status === 'unread';
@@ -285,7 +266,8 @@ export const WeChatVoicePage: React.FC = () => {
                 </div>
               </div>
             );
-          })}
+          })
+          )}
         </div>
       </section>
 
@@ -342,39 +324,6 @@ export const WeChatVoicePage: React.FC = () => {
           )}
         </form>
       </section>
-
-      {/* 模拟孩子在 ESP32 设备按住侧面 BOOT 键发语音给家长的弹窗 */}
-      <Popup
-        visible={simChildPopupOpen}
-        onMaskClick={() => setSimChildPopupOpen(false)}
-        bodyStyle={{ borderRadius: '20px 20px 0 0' }}
-      >
-        <form onSubmit={handleSimulateChildReply} className="p-5 pb-8 space-y-4 max-w-xl mx-auto">
-          <h3 className="text-h1 text-[#1F2937]">模拟孩子在设备端发微聊语音</h3>
-          <p className="text-body text-[#6B7280]">
-            在硬件到货前，可模拟孩子按住微雪 `ESP32-S3-Touch-AMOLED-2.16` 机身侧面物理按键向家长发送语音：
-          </p>
-          <textarea
-            className="kid-input"
-            rows={3}
-            value={simChildText}
-            onChange={e => setSimChildText(e.target.value)}
-            placeholder="输入模拟孩子说的话..."
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setSimChildPopupOpen(false)}
-              className="kid-btn kid-btn-ghost flex-1"
-            >
-              取消
-            </button>
-            <button type="submit" className="kid-btn kid-btn-primary flex-1">
-              模拟设备上传语音
-            </button>
-          </div>
-        </form>
-      </Popup>
     </div>
   );
 };

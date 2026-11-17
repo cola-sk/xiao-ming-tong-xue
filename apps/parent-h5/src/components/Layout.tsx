@@ -12,7 +12,7 @@ import { DeviceSettingsPage } from '../views/DeviceSettings';
 
 export const Layout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('wechat');
-  const { messages, schedules, activeRingingScheduleId } = useAppStore();
+  const { messages, schedules } = useAppStore();
 
   const unreadChildVoiceCount = messages.filter(
     m => m.direction === 'device_to_parent' && m.status === 'unread'
@@ -31,7 +31,7 @@ export const Layout: React.FC = () => {
       key: 'schedules',
       title: '定时播报',
       icon: <IconClock className="w-[18px] h-[18px]" />,
-      badge: activeRingingScheduleId ? '响铃' : activeSchedulesCount > 0 ? activeSchedulesCount : undefined,
+      badge: activeSchedulesCount > 0 ? activeSchedulesCount : undefined,
     },
     {
       key: 'pet-ai',

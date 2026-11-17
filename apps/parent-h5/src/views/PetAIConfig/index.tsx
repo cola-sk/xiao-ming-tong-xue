@@ -4,16 +4,14 @@ import React, { useState } from 'react';
 import { Toast } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { PET_PERSONAS } from '../../services/types';
-import { BrandLogoXiaoming, IconSparkle, IconVolume } from '../../components/Icons';
+import { BrandLogoXiaoming, IconVolume } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const PetAIConfigPage: React.FC = () => {
-  const { petConfig, aiLogs, updatePetConfig, simulateAiDialogue } = useAppStore();
+  const { petConfig, aiLogs, updatePetConfig } = useAppStore();
 
   const [petName, setPetName] = useState(petConfig.petName);
   const [customPrompt, setCustomPrompt] = useState(petConfig.customPrompt);
-  const [simQuestion, setSimQuestion] = useState('小铭同学，为什么天上的星星会眨眼睛呀？');
-  const [simulating, setSimulating] = useState(false);
 
   const handleSelectPersona = (persona: (typeof PET_PERSONAS)[number]) => {
     setCustomPrompt(persona.systemPrompt);
@@ -36,24 +34,6 @@ export const PetAIConfigPage: React.FC = () => {
       customPrompt: customPrompt.trim(),
     });
     Toast.show({ icon: 'success', content: 'AI 宠物人设已保存，下次对话立即生效' });
-  };
-
-  const handleSimulateChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (simulating || !simQuestion.trim()) return;
-    setSimulating(true);
-    try {
-      const { log, ephemeralAudioDataUrl } = await simulateAiDialogue(simQuestion.trim());
-      setSimQuestion('');
-      if (ephemeralAudioDataUrl) {
-        Toast.show({ icon: 'success', content: '豆包生成回答并实时流式播报（音频不落库）' });
-        await playAudioOrFallback(ephemeralAudioDataUrl, log.petReplyText);
-      } else {
-        await playAudioOrFallback(null, log.petReplyText);
-      }
-    } finally {
-      setSimulating(false);
-    }
   };
 
   return (
@@ -140,34 +120,7 @@ export const PetAIConfigPage: React.FC = () => {
         </button>
       </form>
 
-      {/* 2. 在线模拟孩子与 AI 宠物对话 (设备未到前测试流式对话链路) */}
-      <form onSubmit={handleSimulateChat} className="kid-card-highlight space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-h3 text-[#242620] inline-flex items-center gap-1.5">
-            <IconSparkle className="w-4 h-4 text-[#B96043]" />
-            <span>模拟孩子按住屏幕跟 AI 宠物对话</span>
-          </h3>
-          <span className="text-[11px] text-[#8B8A80]">ASR 识别 → LLM 思考 → TTS 播报</span>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={simQuestion}
-            onChange={e => setSimQuestion(e.target.value)}
-            placeholder="输入模拟孩子对宠物提出的问题..."
-            className="kid-input flex-1"
-          />
-          <button
-            type="submit"
-            disabled={simulating}
-            className="kid-btn kid-btn-secondary kid-btn-md shrink-0"
-          >
-            {simulating ? '思考中…' : '模拟提问'}
-          </button>
-        </div>
-      </form>
-
-      {/* 3. 最近伴聊问答记录 */}
+      {/* 2. 最近伴聊问答记录 */}
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5">
           <h3 className="approval-section-title">最近 AI 伴聊记录</h3>
@@ -175,7 +128,12 @@ export const PetAIConfigPage: React.FC = () => {
         </div>
 
         <div className="space-y-2.5">
-          {aiLogs.map(log => (
+          {aiLogs.length === 0 ? (
+            <div className="kid-card text-center py-6 text-xs text-[#8B8A80]">
+              暂无 AI 伴聊记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
+            </div>
+          ) : (
+            aiLogs.map(log => (
             <div key={log.id} className="kid-card space-y-2">
               <div className="flex items-center justify-between text-[11px] text-[#929187]">
                 <span className="font-bold text-[#55574F]">宝贝提问</span>
@@ -209,7 +167,8 @@ export const PetAIConfigPage: React.FC = () => {
                 </button>
               </div>
             </div>
-          ))}
+          ))
+          )}
         </div>
       </section>
     </div>

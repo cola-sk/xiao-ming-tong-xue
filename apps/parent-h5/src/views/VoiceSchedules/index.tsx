@@ -7,7 +7,7 @@ import { useAppStore } from '../../stores/useAppStore';
 import { VoiceSchedule } from '../../services/types';
 import { ScheduleFormModal } from './ScheduleFormModal';
 import { VoiceCloneModal } from './VoiceCloneModal';
-import { IconPlus, IconBell, IconVolume, IconCheck, IconMic, IconSparkle } from '../../components/Icons';
+import { IconPlus, IconVolume, IconMic, IconSparkle } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const VoiceSchedulesPage: React.FC = () => {
@@ -17,9 +17,6 @@ export const VoiceSchedulesPage: React.FC = () => {
     updateSchedule,
     toggleSchedule,
     deleteSchedule,
-    triggerScheduleRing,
-    acknowledgeScheduleOnDevice,
-    activeRingingScheduleId,
   } = useAppStore();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -75,11 +72,10 @@ export const VoiceSchedulesPage: React.FC = () => {
     return '小铭同学萌音';
   };
 
-  const handleSimulateAlarmTrigger = async (sched: VoiceSchedule) => {
-    triggerScheduleRing(sched.id);
+  const handlePlayScheduleAudio = async (sched: VoiceSchedule) => {
     if (sched.audioUrl) {
       Toast.show({
-        content: `模拟设备 RTC 准点唤醒：正在播放豆包合成缓存音频 (MD5: ${sched.audioMd5?.slice(0, 6) || 'local'})`,
+        content: `正在播放定时播报音频 (MD5: ${sched.audioMd5?.slice(0, 6) || 'local'})`,
       });
       await playAudioOrFallback(
         sched.audioUrl,
@@ -90,7 +86,7 @@ export const VoiceSchedulesPage: React.FC = () => {
       return;
     }
 
-    // 若该定时任务尚未保存音频地址（如初始演示数据），首次触发时合成并永久保存 audioUrl 到任务记录，后续每次播放直接读已存地址！
+    // 若该定时任务尚未保存音频地址，首次试播时合成并保存 audioUrl 到任务记录
     const cloneProfile = sched.clonedVoiceId
       ? voiceClones.find(c => c.id === sched.clonedVoiceId)
       : undefined;
@@ -108,7 +104,7 @@ export const VoiceSchedulesPage: React.FC = () => {
         audioMd5: ttsRes.audioMd5 || null,
       });
       Toast.show({
-        content: `已生成并保存永久音频地址 (${savedUrl})，正在播报`,
+        content: `已生成并保存永久音频地址 (${savedUrl})，正在试播`,
       });
       await playAudioOrFallback(
         savedUrl,
@@ -120,7 +116,7 @@ export const VoiceSchedulesPage: React.FC = () => {
     }
 
     Toast.show({
-      content: `模拟设备 PCF85063 RTC 到点唤醒：正在用「${renderSourceBadge(sched)}」播报`,
+      content: `正在试播「${renderSourceBadge(sched)}」`,
     });
     await playAudioOrFallback(
       null,
@@ -129,8 +125,6 @@ export const VoiceSchedulesPage: React.FC = () => {
       sched.clonedSpeakerRole
     );
   };
-
-  const activeRingingSchedule = schedules.find(s => s.id === activeRingingScheduleId);
 
   return (
     <div className="px-3.5 pt-3 pb-24 space-y-3.5 text-[#1F2937]">
@@ -173,54 +167,6 @@ export const VoiceSchedulesPage: React.FC = () => {
           <span>新建定时</span>
         </button>
       </div>
-
-      {/* 当模拟闹钟正在响铃时展示设备弹窗状态与“孩子点击屏幕确认”模拟操作 */}
-      {activeRingingSchedule && (
-        <div className="approval-card border-[#B96043] bg-[#FFF8F5] space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="approval-count-pill inline-flex items-center gap-1">
-              <IconBell className="w-3.5 h-3.5" />
-              设备正在响铃播报 ({renderSourceBadge(activeRingingSchedule)})
-            </span>
-            <span className="font-mono text-xs font-bold text-[#A85339]">
-              {activeRingingSchedule.timeStr}
-            </span>
-          </div>
-          <div className="text-body-lg text-[#292B25]">{activeRingingSchedule.title}</div>
-          <p className="text-body text-[#77786F]">“{activeRingingSchedule.textContent}”</p>
-          <div className="pt-1 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                void playAudioOrFallback(
-                  activeRingingSchedule.audioUrl,
-                  activeRingingSchedule.textContent,
-                  activeRingingSchedule.sourceType,
-                  activeRingingSchedule.clonedSpeakerRole
-                )
-              }
-              className="approval-action approval-action-secondary inline-flex items-center gap-1"
-            >
-              <IconVolume className="w-3.5 h-3.5" />
-              <span>重播声音</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                acknowledgeScheduleOnDevice(activeRingingSchedule.id);
-                Toast.show({
-                  icon: 'success',
-                  content: '孩子已在设备触摸屏点击确认！已上报家长端',
-                });
-              }}
-              className="approval-action approval-action-primary inline-flex items-center gap-1.5"
-            >
-              <IconCheck className="w-3.5 h-3.5" />
-              <span>模拟孩子点击屏幕确认 (alarm_ack)</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 定时任务列表 */}
       {schedules.length === 0 ? (
@@ -295,7 +241,7 @@ export const VoiceSchedulesPage: React.FC = () => {
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     type="button"
-                    onClick={() => handleSimulateAlarmTrigger(sched)}
+                    onClick={() => handlePlayScheduleAudio(sched)}
                     className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
                   >
                     <IconVolume className="w-3 h-3" />
