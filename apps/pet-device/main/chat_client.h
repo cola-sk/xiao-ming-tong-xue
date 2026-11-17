@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -25,12 +27,21 @@ esp_err_t chat_client_fetch_unread(void);
 bool chat_client_has_unread_message(void);
 
 /**
- * Play the queued unread parent message (on child tap) and report voice_read ACK.
+ * Play the queued unread parent message (downloading real recorded WAV via
+ * GET /api/v1/chat/messages/{id}/audio or falling back to real-time TTS if text-only)
+ * and report voice_read ACK so server purges the transient audio.
  */
 esp_err_t chat_client_play_next_unread(void);
 
 /**
- * Upload child's recorded WeChat voice message to parent App via POST /api/v1/chat/messages.
+ * Upload child's recorded WAV audio buffer + metadata to parent App via POST /api/v1/chat/messages.
+ * If wav_data is NULL, sends text-only metadata.
+ */
+esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_len,
+                                           const char *asr_text, int duration_sec);
+
+/**
+ * Convenience wrapper for sending text/metadata voice notification.
  */
 esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec);
 

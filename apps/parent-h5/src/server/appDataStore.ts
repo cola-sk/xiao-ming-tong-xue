@@ -493,7 +493,10 @@ export async function listChatMessages(params?: {
   if (sql) {
     await ensureNeonSchema();
     const rows = await sql`
-      SELECT * FROM chat_voice_messages ORDER BY created_at ASC LIMIT 100
+      SELECT id, device_id, direction, sender_name, audio_url, duration_sec, asr_text, auto_play, status, created_at
+      FROM chat_voice_messages
+      ORDER BY created_at ASC
+      LIMIT 100
     `;
     return rows
       .map(r => mapChatMsgRow(r as Record<string, unknown>))
@@ -527,6 +530,8 @@ export async function listChatMessages(params?: {
   });
 }
 
+const memTransientAudio = new Map<string, { base64: string; mimeType: string }>();
+
 export async function createChatMessage(params: {
   id?: string;
   deviceId?: string;
@@ -535,14 +540,21 @@ export async function createChatMessage(params: {
   durationSec: number;
   asrText: string;
   autoPlay: boolean;
+  audioBase64?: string;
+  audioMime?: string;
 }): Promise<ChatVoiceMessageRecord> {
-  // 聊天语音音频文件不落数据库，仅保存消息元数据、状态与文字转写
+  const id = params.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const hasTransientAudio = Boolean(params.audioBase64 && params.audioBase64.length > 0);
+  const audioUrl = hasTransientAudio ? `/api/v1/chat/messages/${id}/audio` : '';
+  const mime = params.audioMime || 'audio/wav';
+
+  // 聊天语音不长期持久化保存：仅在未读中转投递期暂存，对方播放确认 (`voice_read` / `played`) 后立刻置 NULL 销毁
   const record: ChatVoiceMessageRecord = {
-    id: params.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id,
     deviceId: params.deviceId || 'default',
     direction: params.direction,
     senderName: params.senderName,
-    audioUrl: '',
+    audioUrl,
     durationSec: Math.max(1, Number(params.durationSec || 3)),
     asrText: params.asrText,
     autoPlay: Boolean(params.autoPlay),
@@ -555,30 +567,78 @@ export async function createChatMessage(params: {
     await ensureNeonSchema();
     await sql`
       INSERT INTO chat_voice_messages (
-        id, device_id, direction, sender_name, audio_url, duration_sec, asr_text, auto_play, status
+        id, device_id, direction, sender_name, audio_url,
+        pending_audio_base64, pending_audio_mime,
+        duration_sec, asr_text, auto_play, status
       ) VALUES (
         ${record.id}, ${record.deviceId}, ${record.direction}, ${record.senderName},
-        '', ${record.durationSec}, ${record.asrText}, ${record.autoPlay}, ${record.status}
+        ${record.audioUrl}, ${hasTransientAudio ? params.audioBase64! : null}, ${hasTransientAudio ? mime : null},
+        ${record.durationSec}, ${record.asrText}, ${record.autoPlay}, ${record.status}
       )
     `;
   } else {
     memChatMessages.set(record.id, record);
+    if (hasTransientAudio) {
+      memTransientAudio.set(record.id, { base64: params.audioBase64!, mimeType: mime });
+    }
   }
 
   return record;
 }
 
+/**
+ * 拉取未读微聊消息的临时中转音频（用于发声播放；已读清理后返回 null）
+ */
+export async function getTransientChatAudio(
+  msgId: string
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const cleanId = msgId.replace(/\.(wav|mp3|webm)$/i, '');
+  const sql = getNeonSql();
+  if (sql) {
+    await ensureNeonSchema();
+    const rows = await sql`
+      SELECT pending_audio_base64, pending_audio_mime
+      FROM chat_voice_messages
+      WHERE id = ${cleanId}
+      LIMIT 1
+    `;
+    if (rows.length > 0 && rows[0].pending_audio_base64) {
+      return {
+        buffer: Buffer.from(String(rows[0].pending_audio_base64), 'base64'),
+        mimeType: String(rows[0].pending_audio_mime || 'audio/wav'),
+      };
+    }
+    return null;
+  }
+
+  const mem = memTransientAudio.get(cleanId);
+  if (!mem) return null;
+  return {
+    buffer: Buffer.from(mem.base64, 'base64'),
+    mimeType: mem.mimeType,
+  };
+}
+
+/**
+ * 标记消息已读并立即销毁中转音频数据（阅后即焚，不长期保存聊天录音）
+ */
 export async function markChatMessagePlayed(id: string): Promise<void> {
   const sql = getNeonSql();
   if (sql) {
     await ensureNeonSchema();
     await sql`
-      UPDATE chat_voice_messages SET status = 'played' WHERE id = ${id}
+      UPDATE chat_voice_messages
+      SET status = 'played',
+          audio_url = '',
+          pending_audio_base64 = NULL,
+          pending_audio_mime = NULL
+      WHERE id = ${id}
     `;
     return;
   }
+  memTransientAudio.delete(id);
   const existing = memChatMessages.get(id);
   if (existing) {
-    memChatMessages.set(id, { ...existing, status: 'played' });
+    memChatMessages.set(id, { ...existing, status: 'played', audioUrl: '' });
   }
 }

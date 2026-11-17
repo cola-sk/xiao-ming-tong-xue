@@ -113,7 +113,7 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
 
-      // 7. 亲子双向微聊消息表 (chat_voice_messages) —— 元数据与 ASR 文本持久化；音频不长期存库
+      // 7. 亲子双向微聊消息表 (chat_voice_messages) —— 仅在未读中转期间暂存 pending_audio，已读后即置 NULL 清空（不长期存库）
       await sql`
         CREATE TABLE IF NOT EXISTS chat_voice_messages (
           id TEXT PRIMARY KEY,
@@ -121,6 +121,8 @@ export async function ensureNeonSchema(): Promise<void> {
           direction TEXT NOT NULL,
           sender_name TEXT NOT NULL DEFAULT '妈妈',
           audio_url TEXT NOT NULL DEFAULT '',
+          pending_audio_base64 TEXT,
+          pending_audio_mime TEXT,
           duration_sec INTEGER NOT NULL DEFAULT 3,
           asr_text TEXT NOT NULL DEFAULT '',
           auto_play BOOLEAN NOT NULL DEFAULT FALSE,
@@ -128,6 +130,8 @@ export async function ensureNeonSchema(): Promise<void> {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `;
+      await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_base64 TEXT`;
+      await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_mime TEXT`;
     })().catch(err => {
       schemaReadyPromise = null;
       throw err;

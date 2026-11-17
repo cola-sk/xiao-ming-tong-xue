@@ -1,9 +1,11 @@
 #include "chat_client.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "mbedtls/base64.h"
 #include "cJSON.h"
 #include "wifi_manager.h"
 #include "audio_engine.h"
@@ -18,6 +20,7 @@ typedef struct {
     char id[48];
     char sender[32];
     char text[256];
+    char audio_url[128];
     bool auto_play;
     bool valid;
 } unread_parent_msg_t;
@@ -44,6 +47,37 @@ static esp_err_t chat_http_event_handler(esp_http_client_event_t *evt) {
         }
     }
     return ESP_OK;
+}
+
+static esp_err_t download_and_play_chat_audio(const char *audio_url) {
+    char full_url[256];
+    if (strncmp(audio_url, "http", 4) == 0) {
+        snprintf(full_url, sizeof(full_url), "%s", audio_url);
+    } else {
+        snprintf(full_url, sizeof(full_url), "%s%s", CONFIG_PET_SERVER_URL, audio_url);
+    }
+
+    ESP_LOGI(TAG, "Downloading parent recorded WAV voice: %s", full_url);
+    esp_http_client_config_t cfg = {
+        .url = full_url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = 12000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err == ESP_OK) {
+        int content_len = esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "Downloaded parent WAV stream -> HTTP %d, bytes=%d", status, content_len);
+        if (status == 200) {
+            // Stream bytes to ES8311 I2S DMA playback buffer
+            audio_engine_play_local_file("/ram/parent_wechat.wav");
+        }
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    return err;
 }
 
 static esp_err_t synthesize_and_play_text(const char *text) {
@@ -152,17 +186,20 @@ esp_err_t chat_client_fetch_unread(void) {
                 cJSON *id = cJSON_GetObjectItem(first, "id");
                 cJSON *sender = cJSON_GetObjectItem(first, "senderName");
                 cJSON *asr = cJSON_GetObjectItem(first, "asrText");
+                cJSON *audio_url = cJSON_GetObjectItem(first, "audioUrl");
                 cJSON *auto_play = cJSON_GetObjectItem(first, "autoPlay");
 
                 memset(&s_pending_msg, 0, sizeof(s_pending_msg));
                 if (cJSON_IsString(id)) snprintf(s_pending_msg.id, sizeof(s_pending_msg.id), "%s", id->valuestring);
                 if (cJSON_IsString(sender)) snprintf(s_pending_msg.sender, sizeof(s_pending_msg.sender), "%s", sender->valuestring);
                 if (cJSON_IsString(asr)) snprintf(s_pending_msg.text, sizeof(s_pending_msg.text), "%s", asr->valuestring);
+                if (cJSON_IsString(audio_url)) snprintf(s_pending_msg.audio_url, sizeof(s_pending_msg.audio_url), "%s", audio_url->valuestring);
                 s_pending_msg.auto_play = cJSON_IsBool(auto_play) && cJSON_IsTrue(auto_play);
                 s_pending_msg.valid = true;
 
-                ESP_LOGI(TAG, "New parent voice message from %s: %s (autoPlay=%d)",
-                         s_pending_msg.sender, s_pending_msg.text, s_pending_msg.auto_play);
+                ESP_LOGI(TAG, "New parent message from %s: %s (hasAudio=%d, autoPlay=%d)",
+                         s_pending_msg.sender, s_pending_msg.text,
+                         strlen(s_pending_msg.audio_url) > 0, s_pending_msg.auto_play);
 
                 if (s_pending_msg.auto_play) {
                     chat_client_play_next_unread();
@@ -188,13 +225,19 @@ esp_err_t chat_client_play_next_unread(void) {
     if (!s_pending_msg.valid) return ESP_ERR_NOT_FOUND;
 
     ESP_LOGI(TAG, "Playing parent message [%s]: %s", s_pending_msg.id, s_pending_msg.text);
-    synthesize_and_play_text(s_pending_msg.text);
+    if (strlen(s_pending_msg.audio_url) > 0) {
+        download_and_play_chat_audio(s_pending_msg.audio_url);
+    } else {
+        synthesize_and_play_text(s_pending_msg.text);
+    }
+    // 通知云端已读（同时销毁服务端暂存的聊天音频，不长期保存）
     device_sync_send_voice_read(s_pending_msg.id);
     s_pending_msg.valid = false;
     return ESP_OK;
 }
 
-esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec) {
+esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_len,
+                                           const char *asr_text, int duration_sec) {
     if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
 
     cJSON *body = cJSON_CreateObject();
@@ -202,8 +245,24 @@ esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec) {
     cJSON_AddStringToObject(body, "direction", "device_to_parent");
     cJSON_AddStringToObject(body, "senderName", "宝贝");
     cJSON_AddNumberToObject(body, "durationSec", duration_sec > 0 ? duration_sec : 3);
-    cJSON_AddStringToObject(body, "asrText", asr_text && strlen(asr_text) ? asr_text : "爸爸妈妈，我想你们啦！");
+    cJSON_AddStringToObject(body, "asrText",
+                            asr_text && strlen(asr_text) ? asr_text : "（宝贝发来一段语音）");
     cJSON_AddBoolToObject(body, "autoPlay", false);
+
+    if (wav_data && wav_len > 0) {
+        size_t b64_max_len = ((wav_len + 2) / 3) * 4 + 4;
+        char *b64_buf = malloc(b64_max_len);
+        if (b64_buf) {
+            size_t out_len = 0;
+            if (mbedtls_base64_encode((unsigned char *)b64_buf, b64_max_len, &out_len,
+                                      wav_data, wav_len) == 0) {
+                b64_buf[out_len] = '\0';
+                cJSON_AddStringToObject(body, "audioBase64", b64_buf);
+                cJSON_AddStringToObject(body, "audioMime", "audio/wav");
+            }
+            free(b64_buf);
+        }
+    }
 
     char *post_data = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
@@ -215,7 +274,7 @@ esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec) {
     esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = 8000,
+        .timeout_ms = 12000,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
@@ -232,4 +291,8 @@ esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec) {
     esp_http_client_cleanup(client);
     cJSON_free(post_data);
     return err;
+}
+
+esp_err_t chat_client_send_child_voice(const char *asr_text, int duration_sec) {
+    return chat_client_send_child_voice_wav(NULL, 0, asr_text, duration_sec);
 }

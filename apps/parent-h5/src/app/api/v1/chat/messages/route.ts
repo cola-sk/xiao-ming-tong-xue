@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
 /**
  * 亲子双向微聊 RESTful API (`/api/v1/chat/messages`)
  * - GET: 获取指定设备下的微聊语音消息记录（支持按 direction / status 过滤）
- * - POST: 发送新微聊消息（Parent <-> Device 双向，仅保存消息元数据与文字转写，音频流不永久落库）
- * - PATCH: 标记消息已读 (`played`)
+ * - POST: 发送新微聊消息（支持附带录制的 audioBase64 WAV/MP3 原声；仅在未读期中转暂存，已读后立刻销毁，不长期落库）
+ * - PATCH: 标记消息已读 (`played`) 并触发清空临时中转音频
  */
 export async function GET(request: NextRequest) {
   const deviceId = request.nextUrl.searchParams.get('deviceId') || undefined;
@@ -55,10 +55,12 @@ export async function POST(request: NextRequest) {
   const durationSec = Number(body.durationSec || 3);
   const autoPlay = Boolean(body.autoPlay);
   const deviceId = body.deviceId ? String(body.deviceId) : 'default';
+  const audioBase64 = typeof body.audioBase64 === 'string' ? body.audioBase64 : undefined;
+  const audioMime = typeof body.audioMime === 'string' ? body.audioMime : undefined;
 
-  if (!asrText) {
+  if (!asrText && !audioBase64) {
     return NextResponse.json(
-      { error: '消息内容不能为空' },
+      { error: '语音音频或消息文字不能同时为空' },
       { status: 400 }
     );
   }
@@ -70,8 +72,10 @@ export async function POST(request: NextRequest) {
       direction,
       senderName,
       durationSec,
-      asrText,
+      asrText: asrText || `（${durationSec}秒原声语音）`,
       autoPlay,
+      audioBase64,
+      audioMime,
     });
     return NextResponse.json({
       status: 'ok',

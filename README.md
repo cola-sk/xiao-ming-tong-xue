@@ -1,140 +1,195 @@
-# 「小铭同学」（AI Chat Pet）—— 智能语音宠物全栈系统
+# 「小铭同学」（AI Chat Pet）—— 智能语音宠物全栈技术方案
 
-**「小铭同学」** 是基于 **微雪（Waveshare）`ESP32-S3-Touch-AMOLED-2.16`**（2.16 寸 480×480 方形 AMOLED 屏、`CO5300` + `CST9220` 触控、`ES7210` 双麦阵列硬件 AEC、`ES8311` 解码功放、`PCF85063` 硬件 RTC）打造的儿童智能陪伴与亲子双向微聊全栈系统。
+**「小铭同学」** 是基于 **微雪（Waveshare）`ESP32-S3-Touch-AMOLED-2.16`**（2.16 寸 480×480 方形 AMOLED 屏、`CO5300` + `CST9220` 触控、`ES7210` 双麦硬件 AEC、`ES8311` 扬声器、`PCF85063` 硬件 RTC）打造的儿童智能陪伴与亲子双向微聊全栈系统。
 
-详细原始产品需求与交互原型草案见 [docs/esp32-ai-pet-solution.md](docs/esp32-ai-pet-solution.md)。
-
----
-
-## 一、三大核心功能
-
-1. **AI 宠物伴聊（豆包大模型 + 豆包语音 V3）**
-   - 家长可自定义宠物昵称、性格人设模板（System Prompt）与萌宠音色，调节外放音量。
-   - 孩子在设备端按住屏幕提问，云端调用火山方舟大模型生成口语化回答，并实时调用豆包语音 V3 合成音频返回播放；问答文本自动同步至家长端记录。
-2. **定时语音播报 & 爸妈声音复刻**
-   - 支持家长输入文字转宠物萌音、或上传/录制 5~15 秒原声调用**豆包声音复刻（`seed-icl-2.0`）**生成专属 `S_xxx` 音色进行定时提醒。
-   - 云端按 `(voiceType + text)` 生成确定性 MD5 并提供永久音频地址 `/api/v1/audio/[md5]`，ESP32 后台静默预下载缓存，结合本地 `PCF85063` 硬件 RTC 在断网状态下也可准点唤醒播放；孩子点击屏幕确认后回传 `alarm_ack`。
-3. **亲子双向微聊**
-   - 家长在 H5 按住录音或输入文字发送给设备，支持“直接外放”或“未读红点提示点击收听”；孩子在设备端副页或按住侧面实体按键（`GPIO0`）即可快速发送语音给家长，播放后双向同步已读状态（`voice_read`）。
+原始产品需求文档见 [docs/esp32-ai-pet-solution.md](docs/esp32-ai-pet-solution.md)。
 
 ---
 
-## 二、最终系统技术架构
+## 一、系统总体技术架构
+
+系统采用 **「双端（家长 H5 + ESP32-S3 硬件） ↔ Vercel Serverless API ↔ Neon PostgreSQL + 火山引擎 AI」** 的四层清晰架构：
 
 ```mermaid
-flowchart TB
-    subgraph Client["家长端 H5 (apps/parent-h5 · Next.js 14 + PWA)"]
-        UI_Chat["亲子微聊 (WeChatVoice)"]
-        UI_Sched["定时播报 & 声音复刻工坊 (VoiceSchedules)"]
-        UI_Pet["AI 人设与问答记录 (PetAIConfig)"]
-        UI_Dev["设备管理与实时状态 (DeviceSettings)"]
+flowchart LR
+    subgraph Devices["1. 终端交互层"]
+        direction TB
+        H5["📱 家长端 H5 (Next.js PWA)\n· 亲子双向微聊 (24kHz WAV 录音)\n· 定时播报 & 声音复刻工坊\n· AI 人设配置 & 设备状态监控"]
+        ESP["🤖 硬件终端 (ESP32-S3 ESP-IDF)\n· CO5300 480×480 双页 UI\n· ES7210 录音 / ES8311 外放\n· GPIO0 侧面盲操键 & PCF85063 RTC"]
     end
 
-    subgraph Cloud["云端服务 (Vercel Serverless API + Neon PostgreSQL)"]
-        API_Device["/api/v1/device/sync & status\n(心跳保活 / 60s 在线判定 / ACK同步)"]
-        API_AI["/api/v1/ai/chat & /pet-ai\n(人设配置 / 问答日志)"]
-        API_Audio["/api/v1/tts & /voice-clone & /audio/[md5]\n(复刻训练 / 永久音频地址 CDN 缓存)"]
-        API_Biz["/api/v1/schedules & /chat/messages\n(日程同步 / 双向微聊)"]
-        DB[("Neon PostgreSQL\n7张核心业务表自动建表")]
+    subgraph Gateway["2. 云端 API 网关 (Vercel Serverless · /api/v1/*)"]
+        direction TB
+        GW_Dev["设备网关\n/device/sync · /device/status"]
+        GW_Chat["微聊与伴聊网关\n/chat/messages · /ai/chat · /pet-ai"]
+        GW_Audio["语音与日程网关\n/schedules · /tts · /voice-clone · /audio/[md5]"]
     end
 
-    subgraph AI["火山引擎 / 豆包 AI 能力"]
-        Ark["火山方舟 LLM\n(doubao-seed-2-0-mini-260428)"]
-        Speech["豆包语音 V3 (X-Api-Key)\nseed-tts-2.0 / seed-icl-2.0 / megatts"]
+    subgraph Storage["3. 数据与缓存层 (Neon PostgreSQL)"]
+        direction TB
+        DB_Meta["业务元数据与状态\ndevices · pet_ai_configs · voice_schedules\nvoice_clone_profiles · ai_chat_logs"]
+        DB_Chat["微聊阅后即焚中转队列\nchat_voice_messages\n(仅未读期间暂存音频，已读即置 NULL)"]
+        DB_Audio["定时播报永久音频库\ntts_audio_files\n(按 MD5 去重，CDN 永久缓存)"]
     end
 
-    subgraph Device["硬件设备端 (apps/pet-device · ESP32-S3 ESP-IDF)"]
-        D_WiFi["wifi_manager\nWi-Fi STA + MAC派生DeviceID"]
-        D_Sync["device_sync\n15s HTTPS 心跳 + RTC校时 + 状态同步"]
-        D_RTC["rtc_scheduler\n定时表拉取 + MP3预下载 + 准点唤醒"]
-        D_Chat["chat_client\nAI问答流请求 + 微聊收发"]
-        D_UI["ui_state_machine & audio_engine\n双页状态机 + GPIO0盲操 + ES7210/ES8311"]
+    subgraph AI["4. 火山引擎 AI 引擎"]
+        direction TB
+        Ark["火山方舟大模型\ndoubao-seed-2-0-mini-260428"]
+        Speech["豆包语音 V3 (X-Api-Key)\nseed-tts-2.0 · seed-icl-2.0 声音复刻"]
     end
 
-    Client <-->|"HTTPS JSON (10s 轮询与操作同步)"| Cloud
-    Cloud <-->|"SQL (@neondatabase/serverless)"| DB
-    API_AI <--> Ark
-    API_AI <--> Speech
-    API_Audio <--> Speech
-    Device <-->|"HTTPS TLS + JSON/MP3 (esp_http_client)"| Cloud
+    H5 <-->|"HTTPS (10s 状态同步 / WAV 上传)"| Gateway
+    ESP <-->|"HTTPS TLS (15s 心跳 / WAV 收发 / MP3 拉取)"| Gateway
+
+    GW_Dev <--> DB_Meta
+    GW_Chat <--> DB_Chat
+    GW_Chat <--> DB_Meta
+    GW_Audio <--> DB_Audio
+    GW_Audio <--> DB_Meta
+
+    GW_Chat <--> Ark
+    GW_Chat <--> Speech
+    GW_Audio <--> Speech
+```
+
+### 通信协议选型说明
+
+* **当前落地协议（HTTPS REST + 15 秒心跳多路复用）**：
+  * 后端部署在 **Vercel Serverless** 无状态函数环境（原生不支持持久化 WebSocket/MQTT 服务端长连接），因此 ESP32 端使用 `esp_http_client` + `esp_crt_bundle` 直连 HTTPS API，**零额外网关维护成本**。
+  * ESP32 每 15 秒上报一次 `POST /api/v1/device/sync`（心跳保活、`alarm_ack`、`voice_read`、电量、Wi-Fi RSSI），并在同一响应中下行获取：`serverEpochSec`（RTC 校时）、`volumeLevel`、`unreadMessagesCount`、`enabledSchedulesCount`，实现**在线判定（60 秒 TTL）**与**消息/日程同步**。
+* **后续进阶演进（可选）**：
+  * 如需家长发微聊后 **< 0.5 秒** 硬件立即响铃唤醒，可独立接入 MQTT Broker（如 EMQX Cloud），ESP32 通过 `esp-mqtt` 订阅指令主题唤醒拉取音频。
+  * 如需连续全双工实时打断对话，设备端可直连 WebSocket 流式语音通道。
+
+---
+
+## 二、核心业务与双向语音技术方案
+
+### 2.1 家长与设备双向发送语音技术方案（亲子微聊）
+
+系统支持 **「按住录制真声（WAV）」** 与 **「输入文字实时转语音（TTS）」** 两种发送方式，兼顾**原声保真传输**与**数据库零冗余存储（阅后即焚）**：
+
+1. **端侧音频编码格式统一为 24kHz 单声道 WAV**：
+   * 家长端 H5 使用 Web Audio API（[wavRecorder.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/utils/wavRecorder.ts)）直接录制标准 PCM WAV，彻底规避了 iOS Safari 不兼容 `audio/webm`、以及 ESP32 端缺乏 WebM/Opus 复杂解复用器的问题。
+   * ESP32 设备端通过 `ES7210` 采集 PCM 封装 WAV 头后（[chat_client.c](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/pet-device/main/chat_client.c)），Base64 编码上传。
+2. **「临时中转 + 阅后即焚」音频传输机制**：
+   * 录音消息上传至 `POST /api/v1/chat/messages` 时，音频暂存于 Neon `chat_voice_messages.pending_audio_base64`，并生成临时拉取地址 `/api/v1/chat/messages/{id}/audio`。
+   * 对方拉取播放并上报已读确认（设备端发 `voice_read` 心跳 / 家长端调 `PATCH /api/v1/chat/messages`）后，服务端**立即执行 `pending_audio_base64 = NULL` 销毁音频数据**，数据库仅保留文字与消息状态，实现「**不长期保存亲子聊天音频文件**」。
+   * 若家长发送的是纯文字消息（未录音），则完全不经过临时音频队列，ESP32 收到后直接调用 `/api/v1/tts`（`persist: false`）实时合成语音播放。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Parent as 家长 (H5)
+    participant API as Vercel API + Neon DB
+    participant Device as ESP32-S3 设备
+    actor Child as 孩子
+
+    rect rgb(245, 248, 245)
+        Note over Parent,Child: 方向 A：家长发语音给设备 (Parent -> Device)
+        Parent->>Parent: 按住说话 -> wavRecorder 录制 24kHz WAV
+        Parent->>API: POST /api/v1/chat/messages<br/>(携带 audioBase64 + autoPlay)
+        API-->>API: 写入未读消息，暂存 pending_audio_base64
+        Device->>API: 每 15s 心跳 POST /api/v1/device/sync
+        API-->>Device: 响应 unreadMessagesCount > 0
+        Device->>API: GET /api/v1/chat/messages?status=unread
+        API-->>Device: 返回新消息元数据与 audioUrl
+        Device->>API: GET /api/v1/chat/messages/{id}/audio<br/>(若纯文字则调 /api/v1/tts 实时合成)
+        alt auto_play = true
+            Device->>Child: 亮屏并立即通过 ES8311 外放家长原声
+        else auto_play = false
+            Device->>Child: 响提示音+亮未读红点 -> 孩子点击屏幕播放
+        end
+        Device->>API: 上报 event="voice_read" (msgId)
+        API-->>API: status="played" 并置 NULL 销毁中转音频
+    end
+
+    rect rgb(252, 246, 242)
+        Note over Parent,Child: 方向 B：孩子发语音给家长 (Device -> Parent)
+        Child->>Device: 按住副页触摸屏或侧面 GPIO0 实体键说话
+        Device->>API: POST /api/v1/chat/messages<br/>(direction="device_to_parent", 附带 WAV Base64)
+        API-->>API: 写入未读消息并暂存 pending_audio_base64
+        Parent->>API: 10s 轮询 GET /api/v1/chat/messages
+        API-->>Parent: 展示宝贝未读语音气泡 (含未读红点)
+        Parent->>API: 点击气泡 GET /api/v1/chat/messages/{id}/audio 播放
+        Parent->>API: 播完调 PATCH /api/v1/chat/messages 标为已读
+        API-->>API: status="played" 并置 NULL 销毁中转音频
+    end
 ```
 
 ---
 
-## 三、关键技术方案设计
+### 2.2 AI 宠物伴聊实时语音方案
 
-### 1. 设备与云端通信协议设计
-
-* **现网落地协议：HTTPS REST + 15 秒周期心跳保活**
-  * **选型原因**：后端部署于 **Vercel Serverless** 无状态函数环境（原生不支持持久化 WebSocket/MQTT Broker 长连接），因此采用 ESP32 `esp_http_client` + TLS 证书校验（`esp_crt_bundle`）直连 Vercel REST API，**零额外中间件成本**。
-  * **单次心跳多路复用**（`POST /api/v1/device/sync`）：
-    1. **上行上报**：`deviceId`（由出厂 MAC 派生如 `esp32_pet_a1b2`）、`macAddress`、`firmwareVersion`、`batteryPercent`、`wifiRssi` 及确认事件（`alarm_ack`、`voice_read`）。
-    2. **在线判定**：服务端记录 `last_seen_at`，家长端查询 `/api/v1/device/status` 时以 **最近 60 秒内收到过心跳** 为「在线」，否则为「离线」。
-    3. **下行配置**：返回 `serverEpochSec`（自动校准 ESP32 系统与 RTC 时间）、`volumeLevel`（实时音量同步）、`unreadMessagesCount`（触发拉取微聊）与 `enabledSchedulesCount`（变更时触发拉取日程表）。
-* **进阶实时推送演进（可选）**：
-  * 若后续需要家长发送微聊后 **< 0.5 秒** 硬件立即响应，可在云端接入独立 MQTT Broker（如 EMQX Cloud），ESP32 使用 `esp-mqtt` 订阅 `pet/{deviceId}/cmd` 接收指令唤醒，音频文件仍走 HTTPS 下载。
-  * 实时全双工语音流对话可使用 WebSocket（Opus/PCM 帧）。
-
-### 2. 分层音频持久化策略
-
-为了兼顾 ESP32 离线闹钟可靠性与 Vercel + Neon 数据库存储成本，系统采用严格区分的存储策略：
-
-| 业务类型 | 音频存储策略 | 数据库落库内容 |
-| :--- | :--- | :--- |
-| **功能二：定时语音播报** | **持久化缓存**：按 `(voiceType + text)` 生成确定性 MD5 存入 `tts_audio_files` 表，通过 `GET /api/v1/audio/[md5]` 暴露永久地址（带 `Cache-Control: public, max-age=31536000, immutable` 供 Vercel Edge CDN 缓存及 ESP32 预下载） | 日程元数据 + `audio_url` + `audio_md5` |
-| **功能一：AI 宠物伴聊** | **不保存音频**（`persist: false`）：LLM 回复后实时合成 MP3 返回播放，播完释放 | 仅在 `ai_chat_logs` 保存纯文本问答记录 |
-| **功能三：亲子双向微聊** | **不持久化聊天音频文件**：按轻量流式/即时转写传递 | 仅在 `chat_voice_messages` 保存消息元数据、状态（`unread`/`played`）及 `asr_text` |
-
-### 3. Neon PostgreSQL 数据表结构
-
-应用首次访问时由 [neonDb.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/server/neonDb.ts) 自动幂等建表，无需手工迁移：
-
-* `devices`：设备注册绑定、MAC、固件版本、电量、`wifi_rssi`、音量与最后心跳时间 `last_seen_at`。
-* `pet_ai_configs`：按 `device_id` 存储宠物昵称、人设模板 ID、TTS 音色 ID、System Prompt 与音量。
-* `ai_chat_logs`：孩子与 AI 宠物的文本问答记录。
-* `voice_clone_profiles`：爸妈复刻音色档案（支持自定义或自动生成 `S_xxx` Speaker ID）。
-* `voice_schedules`：定时语音任务（时间、重复周期 JSONB、音源类型、关联音色、音频 URL/MD5、孩子确认状态 `last_ack_status`）。
-* `tts_audio_files`：定时播报 MP3 二进制 Base64 与 MD5 去重缓存表。
-* `chat_voice_messages`：亲子微聊双向消息记录与未读状态。
+* **文本存库、音频流即播即弃（`persist: false`）**：
+  1. 孩子按住 ESP32 主页触摸屏说话，提问经 `/api/v1/ai/chat` 送入火山方舟大模型（`doubao-seed-2-0-mini-260428`），结合设备绑定的 `pet_ai_configs` 人设 Prompt 生成 50 字内口语化回复。
+  2. 纯文本问答对自动写入 `ai_chat_logs` 供家长查看；同时服务端立即调用豆包语音 V3（`seed-tts-2.0`）合成为 MP3 流（当 `responseFormat="mp3"` 时直接返回二进制流给 ESP32 播放），音频不写入数据库。
 
 ---
 
-## 四、Monorepo 目录与模块说明
+### 2.3 定时语音播报与爸妈声音复刻方案
+
+1. **声音复刻（`seed-icl-2.0`）**：
+   * 家长在 H5 录制 5~15 秒 WAV 样本，支持自定义或自动生成唯一 `S_mom_xxx` / `S_dad_xxx` 作为 `speaker_id` 调用 `/api/v1/mega_tts/audio/upload`，成功后将 `provider_voice_id` 存入 `voice_clone_profiles`。
+2. **定时音频永久地址 + 硬件 RTC 离线响铃**：
+   * 新建/编辑定时提醒时开启 `persist: true`，服务端将豆包合成的 MP3 按 `(voiceType + text)` 计算 MD5 存入 Neon `tts_audio_files`，生成永久地址 `/api/v1/audio/{md5}`（Edge CDN 缓存 1 年）。
+   * ESP32 在心跳检测到日程变化后，调用 `GET /api/v1/schedules` 拉取 JSON 并静默预下载 MP3；由本地时间监控与 `PCF85063` 硬件 RTC 在指定 `HH:MM` 与星期掩码下准点触发响铃，孩子点击屏幕停止后上送 `alarm_ack` 更新任务确认时间。
+
+---
+
+## 三、分层音频存储与数据库表设计
+
+| 数据表 | 存储类型 | 用途与生命周期 |
+| :--- | :--- | :--- |
+| `devices` | 结构化元数据 | 设备绑定信息、MAC、固件版本、电量、`wifi_rssi`、`last_seen_at`（60s 在线判定） |
+| `pet_ai_configs` | 结构化元数据 | 按设备存储宠物昵称、人设模板、TTS 音色 ID、Prompt 与音量 |
+| `ai_chat_logs` | 纯文本日志 | 记录孩子提问与宠物回答文本（**不存音频**） |
+| `voice_clone_profiles` | 结构化元数据 | 爸妈复刻音色档案及对应的 `S_xxx` Speaker ID |
+| `voice_schedules` | 结构化元数据 | 定时规则、文案、`audio_url`、MD5 及孩子点击确认状态 `last_ack_status` |
+| `tts_audio_files` | **永久音频库** | **仅存放定时播报 MP3**（Base64 + MD5 去重），支撑 `/api/v1/audio/[md5]` |
+| `chat_voice_messages` | **元数据 + 阅后即焚队列** | 消息元数据持久保留；`pending_audio_base64` 仅在 `unread` 期间暂存，已读后立刻清空 |
+
+> 所有表由 [neonDb.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/server/neonDb.ts) 在服务端首次请求时自动幂等创建。
+
+---
+
+## 四、Monorepo 代码目录说明
 
 ```text
 ai-chat-pet/
 ├── docs/
-│   └── esp32-ai-pet-solution.md        # 原始产品需求与硬件交互设计方案
+│   └── esp32-ai-pet-solution.md        # 原始产品需求与硬件交互规范
 ├── packages/
 │   └── contracts/                      # 跨端共享 TypeScript 数据模型与人设常量
 ├── apps/
 │   ├── parent-h5/                      # 家长端 H5 + Vercel Serverless 后端 (Next.js 14)
 │   │   ├── src/server/
-│   │   │   ├── neonDb.ts               # Neon PostgreSQL 连接与自动建表
-│   │   │   ├── deviceStore.ts          # 设备心跳、绑定与在线状态计算
-│   │   │   ├── appDataStore.ts         # 日程、微聊、人设、日志、复刻音色 CRUD
+│   │   │   ├── neonDb.ts               # Neon PostgreSQL 连接与 7 张表自动初始化
+│   │   │   ├── deviceStore.ts          # 设备心跳、绑定、音量同步与 60s 在线判定
+│   │   │   ├── appDataStore.ts         # 日程、微聊(含阅后即焚音频)、人设、日志 CRUD
 │   │   │   ├── audioStore.ts           # 定时播报 MP3 持久化与按 MD5 去重
-│   │   │   └── doubaoVoice.ts          # 豆包语音 V3 TTS 2.0 & 声音复刻上传/状态查询
+│   │   │   └── doubaoVoice.ts          # 豆包语音 V3 TTS 2.0 & 声音复刻接口封装
 │   │   ├── src/app/api/v1/
-│   │   │   ├── device/sync/route.ts    # 设备心跳 & alarm_ack / voice_read 上报
-│   │   │   ├── device/status/route.ts  # 家长端实时查询/绑定/解绑设备
-│   │   │   ├── ai/chat/route.ts        # 方舟大模型问答 + 豆包 TTS 实时回复
-│   │   │   ├── pet-ai/route.ts         # AI 人设读写与问答日志拉取
+│   │   │   ├── device/sync/route.ts    # 设备心跳、校时、音量与 alarm_ack / voice_read
+│   │   │   ├── device/status/route.ts  # 家长端设备实时在线状态查询与绑定/解绑
+│   │   │   ├── ai/chat/route.ts        # 火山方舟 LLM 问答 + 豆包 TTS 实时语音回复
+│   │   │   ├── pet-ai/route.ts         # AI 宠物人设读写与问答记录查询
 │   │   │   ├── schedules/route.ts      # 定时语音任务增删改查与开关
-│   │   │   ├── chat/messages/route.ts  # 亲子微聊双向消息收发与已读标记
+│   │   │   ├── chat/messages/route.ts  # 亲子双向微聊消息收发与已读状态同步
+│   │   │   ├── chat/messages/[id]/audio/route.ts # 未读微聊原声 WAV 临时投递端点
 │   │   │   ├── voice-clone/route.ts    # 豆包声音复刻上传、状态查询与档案管理
 │   │   │   ├── tts/route.ts            # 豆包 TTS 语音合成接口
-│   │   │   └── audio/[md5]/route.ts    # 永久音频 HTTP 下载/播放端点
+│   │   │   └── audio/[md5]/route.ts    # 定时播报永久 MP3 下载/播放端点
 │   │   └── src/views/                  # WeChatVoice / VoiceSchedules / PetAIConfig / DeviceSettings
 │   └── pet-device/                     # 微雪 ESP32-S3-Touch-AMOLED-2.16 固件 (ESP-IDF)
 │       ├── main/
-│       │   ├── main.c                  # 系统入口：初始化 Wi-Fi、音频、RTC、UI 与云端同步任务
-│       │   ├── Kconfig.projbuild       # menuconfig 配置 Wi-Fi、Server URL 与心跳间隔
+│       │   ├── main.c                  # 入口：初始化 Wi-Fi、音频、RTC、UI 与心跳同步任务
+│       │   ├── Kconfig.projbuild       # menuconfig 配置 Wi-Fi、Server URL 与心跳周期
 │       │   ├── wifi_manager.c/.h       # Wi-Fi STA 连网重连与 MAC 派生 DeviceID
-│       │   ├── device_sync.c/.h        # 15s HTTPS 心跳、时间校准、音量与 ACK 上报
-│       │   ├── rtc_scheduler.c/.h      # 拉取云端日程 JSON、MP3 预缓存、本地 RTC 闹钟监控
-│       │   ├── chat_client.c/.h        # AI 对话音频流请求与亲子微聊双向收发
-│       │   ├── ui_state_machine.c/.h   # 双页+全局闹钟状态机、GPIO0 物理按键防抖与盲操控制
+│       │   ├── device_sync.c/.h        # 15s HTTPS 心跳、RTC 校时、音量与 ACK 上报
+│       │   ├── rtc_scheduler.c/.h      # 拉取定时任务 JSON、MP3 预缓存与准点唤醒
+│       │   ├── chat_client.c/.h        # AI 对话音频流请求与亲子微聊 WAV 双向收发
+│       │   ├── ui_state_machine.c/.h   # 双页状态机、GPIO0 物理按键防抖与闹钟确认
 │       │   └── audio_engine.c/.h       # ES7210 双麦 AEC 录音与 ES8311 音量/播放控制
 │       └── preview/index.html          # 480×480 方形 AMOLED 屏幕交互预览器
 └── supabase/schema.sql                 # PostgreSQL 参考建表脚本
@@ -146,10 +201,8 @@ ai-chat-pet/
 
 ### 1. 环境变量配置（`apps/parent-h5/.env.local`）
 
-可通过 `vercel env pull` 从关联的 Vercel 项目拉取，核心变量如下：
-
 ```ini
-# Neon PostgreSQL（Vercel 集成自动注入）
+# Neon PostgreSQL（Vercel 集成自动注入，可用 vercel env pull 拉取）
 DATABASE_URL=postgresql://...
 
 # 火山引擎「豆包语音」V3（仅需一个 API Key）
@@ -163,33 +216,25 @@ ARK_API_KEY=你的火山方舟API_KEY
 ARK_MODEL_ID=doubao-seed-2-0-mini-260428
 ```
 
-### 2. 启动家长端 H5 与生产构建
+### 2. 本地启动与验证
 
 ```bash
-# 安装依赖
 pnpm install
-
-# 启动本地开发服务 (http://localhost:5189)
 pnpm dev:h5
 
-# TypeScript 类型检查与 Next.js 生产构建验证
+# 类型检查与生产构建验证
 pnpm --filter parent-h5 exec tsc --noEmit
 pnpm build:h5
 ```
 
-### 3. Vercel 部署说明
-
-* Vercel 控制台设置 **Root Directory** 为 `apps/parent-h5`，关联 Neon PostgreSQL 存储并配置上述 `DOUBAO_SPEECH_API_KEY` 与 `ARK_API_KEY` 即可一键发布。
-
-### 4. ESP32-S3 固件编译与烧录（ESP-IDF）
+### 3. ESP32-S3 固件编译与设备绑定
 
 ```bash
 cd apps/pet-device
 idf.py set-target esp32s3
-# 在 "AI Chat Pet (小铭同学) Configuration" 中配置 Wi-Fi SSID/密码与后端 URL
-idf.py menuconfig
+idf.py menuconfig   # 在 "AI Chat Pet (小铭同学) Configuration" 填入 Wi-Fi 与 Vercel 域名
 idf.py build flash monitor
 ```
 
-* 设备首次开机串口将打印派生出的设备 ID（如 `Device ID: esp32_pet_a1b2`）并开始向 `/api/v1/device/sync` 发送心跳。
-* 在家长端 H5 的 **「设备」->「配对新设备」** 中输入该 `Device ID` 完成绑定，即可实时查看在线状态、电量并同步日程与微聊语音。
+1. 固件启动后串口会打印出厂 MAC 派生的唯一设备 ID（如 `Device ID: esp32_pet_a1b2`），并开始每 15 秒向云端发送心跳。
+2. 打开家长端 H5 **「设备」->「配对新设备」** 绑定该 ID，即可实时同步在线状态、电量并开展双向微聊与定时播报。

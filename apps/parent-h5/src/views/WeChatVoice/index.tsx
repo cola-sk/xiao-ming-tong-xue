@@ -5,7 +5,8 @@ import { Switch, Toast } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { ChatVoiceMessage } from '../../services/types';
 import { IconMic, IconVolume, IconBattery, IconWifi } from '../../components/Icons';
-import { playAudioOrFallback } from '../../utils/voiceSynth';
+import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
+import { startWavRecorder, WavRecorderHandle } from '../../utils/wavRecorder';
 
 export const WeChatVoicePage: React.FC = () => {
   const {
@@ -38,45 +39,48 @@ export const WeChatVoicePage: React.FC = () => {
   const [senderRole, setSenderRole] = useState<'妈妈' | '爸爸'>('妈妈');
 
   const timerRef = useRef<number | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const wavRecorderRef = useRef<WavRecorderHandle | null>(null);
 
   const handlePlayBubble = async (msg: ChatVoiceMessage) => {
     if (playingId) return;
     setPlayingId(msg.id);
-    if (msg.status === 'unread') {
-      markMessagePlayed(msg.id);
+    try {
+      if (msg.audioUrl) {
+        await playAudioOrFallback(msg.audioUrl, msg.asrText);
+      } else if (msg.asrText) {
+        // 纯文字消息或已阅后清理音频的消息，点击时按实时 TTS 试听
+        const tts = await requestDoubaoTtsAudio({
+          text: msg.asrText,
+          voiceType: petConfig.voiceId,
+          persist: false,
+        });
+        await playAudioOrFallback(tts.audioDataUrl, msg.asrText);
+      }
+      if (msg.status === 'unread') {
+        markMessagePlayed(msg.id);
+      }
+    } finally {
+      setPlayingId('');
     }
-    await playAudioOrFallback(msg.audioUrl, msg.asrText);
-    setPlayingId('');
   };
 
   const startHoldRecord = async () => {
     if (isRecording) return;
-    setIsRecording(true);
-    setRecordSeconds(1);
-    audioChunksRef.current = [];
+    try {
+      const handle = await startWavRecorder();
+      wavRecorderRef.current = handle;
+      setIsRecording(true);
+      setRecordSeconds(1);
 
-    timerRef.current = window.setInterval(() => {
-      setRecordSeconds(prev => prev + 1);
-    }, 1000);
-
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const recorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = recorder;
-        recorder.ondataavailable = e => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-        recorder.start();
-      } catch {
-        // 麦克风未授权时平滑回退到模拟语音消息
-      }
+      timerRef.current = window.setInterval(() => {
+        setRecordSeconds(prev => prev + 1);
+      }, 1000);
+    } catch {
+      Toast.show({ icon: 'fail', content: '无法访问麦克风，请允许浏览器麦克风权限或直接输入文字发送' });
     }
   };
 
-  const stopHoldRecordAndSend = () => {
+  const stopHoldRecordAndSend = async () => {
     if (!isRecording) return;
     setIsRecording(false);
     if (timerRef.current) {
@@ -84,39 +88,29 @@ export const WeChatVoicePage: React.FC = () => {
       timerRef.current = null;
     }
 
-    const duration = Math.max(2, recordSeconds);
-    const finishSend = (audioUrl?: string) => {
-      const content =
-        textInput.trim() ||
-        `${senderRole}发来一段 ${duration} 秒的贴心语音，记得按时喝水休息哦！`;
-      sendParentVoiceMessage({
-        senderName: senderRole,
-        asrText: content,
-        durationSec: duration,
-        autoPlay: autoPlayOnDevice,
-        audioUrl,
-      });
-      setTextInput('');
-      Toast.show({
-        icon: 'success',
-        content: autoPlayOnDevice
-          ? '已发送，设备端将立即外放播报'
-          : '已发送，设备端亮起未读红点等待宝贝点击',
-      });
-    };
+    const duration = Math.max(1, recordSeconds);
+    const recorder = wavRecorderRef.current;
+    wavRecorderRef.current = null;
+    if (!recorder) return;
 
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.onstop = () => {
-        recorder.stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = blob.size > 0 ? URL.createObjectURL(blob) : undefined;
-        finishSend(url);
-      };
-      recorder.stop();
-    } else {
-      finishSend();
-    }
+    const { base64, url } = await recorder.stop();
+    const content = textInput.trim() || `（${duration}秒原声语音）`;
+    sendParentVoiceMessage({
+      senderName: senderRole,
+      asrText: content,
+      durationSec: duration,
+      autoPlay: autoPlayOnDevice,
+      audioUrl: url,
+      audioBase64: base64,
+      audioMime: 'audio/wav',
+    });
+    setTextInput('');
+    Toast.show({
+      icon: 'success',
+      content: autoPlayOnDevice
+        ? 'WAV 原声已上传，设备端将直接外放播报'
+        : 'WAV 原声已上传，设备端亮起未读红点等待宝贝点击',
+    });
   };
 
   const handleQuickTextVoiceSend = (e: React.FormEvent) => {

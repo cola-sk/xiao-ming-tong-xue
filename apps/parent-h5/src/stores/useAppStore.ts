@@ -83,6 +83,8 @@ interface AppState {
     durationSec: number;
     autoPlay: boolean;
     audioUrl?: string;
+    audioBase64?: string;
+    audioMime?: string;
   }) => void;
   markMessagePlayed: (msgId: string) => void;
   syncMessagesFromServer: () => Promise<void>;
@@ -168,11 +170,20 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      sendParentVoiceMessage: ({ senderName, asrText, durationSec, autoPlay, audioUrl }) => {
+      sendParentVoiceMessage: ({
+        senderName,
+        asrText,
+        durationSec,
+        autoPlay,
+        audioUrl,
+        audioBase64,
+        audioMime,
+      }) => {
         const state = get();
         const id = `msg_${Date.now()}`;
         const deviceId = state.selectedDeviceId || 'default';
-        const cleanText = asrText.trim() || '（语音消息）';
+        const cleanText = asrText.trim() || `（${durationSec}秒原声语音）`;
+        const remoteAudioUrl = audioBase64 ? `/api/v1/chat/messages/${id}/audio` : '';
         const newMsg: ChatVoiceMessage = {
           id,
           familyId: state.family.id,
@@ -180,7 +191,7 @@ export const useAppStore = create<AppState>()(
           childId: state.children[0]?.id,
           direction: 'parent_to_device',
           senderName: senderName || '妈妈',
-          audioUrl: audioUrl || '',
+          audioUrl: audioUrl || remoteAudioUrl,
           durationSec: Math.max(1, durationSec),
           asrText: cleanText,
           autoPlay,
@@ -199,6 +210,8 @@ export const useAppStore = create<AppState>()(
             durationSec: newMsg.durationSec,
             asrText: cleanText,
             autoPlay,
+            audioBase64,
+            audioMime,
           }),
         }).catch(() => {});
       },
