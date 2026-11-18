@@ -74,7 +74,7 @@ export const IconPaw: React.FC<{ className?: string }> = ({ className = 'w-5 h-5
 
 /** 小铭同学品牌标识，与桌面图标使用同一份矢量资源。 */
 export const BrandLogoXiaoming: React.FC<{ className?: string }> = ({ className = 'w-8 h-8' }) => (
-  <img className={className} src="/icons/xiaoming-logo.svg?v=3" alt="小铭同学" />
+  <img className={className} src="/icons/xiaoming-logo.svg?v=5" alt="小铭同学" />
 );
 
 export const IconPlus: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (

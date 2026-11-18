@@ -1,7 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" fill="none">
+  <defs>
+    <linearGradient id="splashCoralBg" x1="84" y1="84" x2="996" y2="996" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF6B6B"/>
+      <stop offset="52%" stop-color="#FF8E53"/>
+      <stop offset="100%" stop-color="#FFB347"/>
+    </linearGradient>
+  </defs>
   <rect width="1080" height="1920" fill="#F5F4F0"/>
-  <g transform="translate(412 760)">
-    <path fill="#866E5D" d="M42 188c30-10 45-27 63-56 23-38 51-62 109-70-28 20-48 43-65 70-22 34-54 54-107 56Z"/>
-    <path fill="#D6A98B" d="M68 198c36-16 63-36 89-65 12-13 28-24 49-30-22 38-50 65-87 80-16 7-33 12-51 15Z"/>
+  <!-- 中央品牌 Logo 图标 (320x320 居中在 x: 380, y: 720) -->
+  <g transform="translate(380 720)">
+    <rect width="320" height="320" rx="75" fill="url(#splashCoralBg)"/>
+    <g transform="scale(1.25)">
+      <path d="M52 170 C82 162, 110 138, 134 98 C144 80, 154 62, 162 50 C154 80, 150 104, 156 122 C172 114, 190 104, 206 90 C188 126, 160 154, 120 170 C94 180, 70 178, 52 170 Z" fill="#FFFFFF"/>
+      <circle cx="94" cy="84" r="15" fill="#FFFBEB"/>
+    </g>
   </g>
+  <!-- 品牌文字 -->
+  <text x="540" y="1120" text-anchor="middle" fill="#242620" font-family="'Nunito', 'PingFang SC', sans-serif" font-size="44" font-weight="800" letter-spacing="2">小铭同学</text>
+  <text x="540" y="1170" text-anchor="middle" fill="#77786F" font-family="'Nunito', 'PingFang SC', sans-serif" font-size="24" font-weight="600" letter-spacing="1">智能语音萌宠 · 亲子微聊空间</text>
 </svg>

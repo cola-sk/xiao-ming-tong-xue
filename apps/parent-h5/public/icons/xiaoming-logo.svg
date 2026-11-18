@@ -1,6 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
   <title>小铭同学</title>
-  <rect width="256" height="256" rx="62" fill="#F5F4F0"/>
-  <path fill="#866E5D" d="M42 188c30-10 45-27 63-56 23-38 51-62 109-70-28 20-48 43-65 70-22 34-54 54-107 56Z"/>
-  <path fill="#D6A98B" d="M68 198c36-16 63-36 89-65 12-13 28-24 49-30-22 38-50 65-87 80-16 7-33 12-51 15Z"/>
+  <defs>
+    <linearGradient id="coralBg" x1="20" y1="20" x2="236" y2="236" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF6B6B"/>
+      <stop offset="52%" stop-color="#FF8E53"/>
+      <stop offset="100%" stop-color="#FFB347"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="60" fill="url(#coralBg)"/>
+  <!-- 简洁飞扬的白色羽翼/飞燕剪影 -->
+  <path d="M52 170 C82 162, 110 138, 134 98 C144 80, 154 62, 162 50 C154 80, 150 104, 156 122 C172 114, 190 104, 206 90 C188 126, 160 154, 120 170 C94 180, 70 178, 52 170 Z" fill="#FFFFFF"/>
+  <!-- 朝光灵动圆点 -->
+  <circle cx="94" cy="84" r="15" fill="#FFFBEB"/>
 </svg>
