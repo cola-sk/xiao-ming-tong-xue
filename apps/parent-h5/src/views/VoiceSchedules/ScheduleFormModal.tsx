@@ -10,10 +10,13 @@ import {
   requestDoubaoTtsAudio,
 } from '../../utils/voiceSynth';
 
+export type ScheduleModalMode = 'create' | 'schedule' | 'voice';
+
 interface Props {
   visible: boolean;
   onClose: () => void;
   initialSchedule?: VoiceSchedule | null;
+  editMode?: ScheduleModalMode;
   onOpenCloneStudio?: () => void;
 }
 
@@ -31,8 +34,14 @@ export const ScheduleFormModal: React.FC<Props> = ({
   visible,
   onClose,
   initialSchedule,
+  editMode,
   onOpenCloneStudio,
 }) => {
+  const mode: ScheduleModalMode = initialSchedule
+    ? editMode === 'voice'
+      ? 'voice'
+      : 'schedule'
+    : 'create';
   const { addSchedule, updateSchedule, petConfig, voiceClones } = useAppStore();
 
   const [title, setTitle] = useState('晚上刷牙睡觉提醒');
@@ -108,30 +117,44 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
   const handleSubmit = async () => {
     if (isSynthesizing) return;
-    if (!title.trim()) {
+
+    if (mode !== 'voice' && !title.trim()) {
       Toast.show({ icon: 'fail', content: '请填写提醒任务标题' });
       return;
     }
-    if (!textContent.trim()) {
+    if (mode !== 'schedule' && !textContent.trim()) {
       Toast.show({ icon: 'fail', content: '请填写要转成语音播报的文字内容' });
+      return;
+    }
+    if (mode !== 'schedule' && sourceType === 'parent_clone' && !selectedCloneProfile) {
+      Toast.show({ content: '尚未录制或绑定爸妈克隆音色，请先录制或选择萌音播报' });
       return;
     }
 
     setIsSynthesizing(true);
     try {
-      const [hourStr, minStr] = timeStr.split(':');
-      const cronDays = repeatDays.length > 0 ? repeatDays.join(',') : '*';
-      const cronExpr = `${Number(minStr || 0)} ${Number(hourStr || 7)} * * ${cronDays}`;
+      if (mode === 'schedule' && initialSchedule) {
+        const [hourStr, minStr] = timeStr.split(':');
+        const cronDays = repeatDays.length > 0 ? repeatDays.join(',') : '*';
+        const cronExpr = `${Number(minStr || 0)} ${Number(hourStr || 7)} * * ${cronDays}`;
+
+        await updateSchedule(initialSchedule.id, {
+          title: title.trim(),
+          timeStr,
+          repeatDays,
+          cronExpr,
+          repeatPlayCount,
+        });
+        Toast.show({
+          icon: 'success',
+          content: '定时信息已更新（沿用原语音音频）',
+        });
+        onClose();
+        return;
+      }
 
       let audioUrl: string | null = initialSchedule?.audioUrl || null;
       let audioMd5: string | null = initialSchedule?.audioMd5 || null;
-
-      if (sourceType === 'parent_clone') {
-        if (!selectedCloneProfile) {
-          Toast.show({ content: '尚未录制或绑定爸妈克隆音色，请先录制或选择萌音播报' });
-          return;
-        }
-      }
 
       if (sourceType === 'parent_clone' || sourceType === 'tts') {
         const isCloned = sourceType === 'parent_clone';
@@ -163,26 +186,25 @@ export const ScheduleFormModal: React.FC<Props> = ({
               clonedSpeakerRole: null,
             };
 
-      if (initialSchedule) {
+      if (mode === 'voice' && initialSchedule) {
         await updateSchedule(initialSchedule.id, {
-          title: title.trim(),
-          timeStr,
-          repeatDays,
-          cronExpr,
           sourceType,
           ...cloneMeta,
           textContent: textContent.trim(),
           audioUrl,
           audioMd5,
-          repeatPlayCount,
         });
         Toast.show({
           icon: 'success',
           content: audioUrl
-            ? '任务已保存，设备将在下次同步时获取'
-            : '定时任务已更新',
+            ? '声音与文字已重新合成并保存，等待设备同步'
+            : '播报内容已更新',
         });
       } else {
+        const [hourStr, minStr] = timeStr.split(':');
+        const cronDays = repeatDays.length > 0 ? repeatDays.join(',') : '*';
+        const cronExpr = `${Number(minStr || 0)} ${Number(hourStr || 7)} * * ${cronDays}`;
+
         await addSchedule({
           title: title.trim(),
           timeStr,
@@ -220,7 +242,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       onMaskClick={onClose}
       position="bottom"
       bodyStyle={{
-        height: '86vh',
+        height: mode === 'create' ? '86vh' : '74vh',
         borderTopLeftRadius: '22px',
         borderTopRightRadius: '22px',
         background: '#FFFFFF',
@@ -230,7 +252,11 @@ export const ScheduleFormModal: React.FC<Props> = ({
         {/* Header */}
         <div className="px-4 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] flex items-center justify-between">
           <h3 className="text-h2 text-[#1F2937]">
-            {initialSchedule ? '编辑定时语音播报' : '新建定时语音播报'}
+            {mode === 'create'
+              ? '新建定时语音播报'
+              : mode === 'schedule'
+              ? '修改定时信息'
+              : '修改声音与文字'}
           </h3>
           <button type="button" onClick={onClose} className="kid-btn kid-btn-ghost kid-btn-sm">
             关闭
@@ -239,7 +265,19 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
         {/* Body */}
         <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-3.5">
+          {mode === 'schedule' && initialSchedule && (
+            <div className="px-3 py-2 rounded-xl bg-[#F5F4F0] text-[12px] text-[#55574F]">
+              当前语音内容（不重新合成）：“{initialSchedule.textContent}”
+            </div>
+          )}
+          {mode === 'voice' && initialSchedule && (
+            <div className="px-3 py-2 rounded-xl bg-[#F5F4F0] text-[12px] text-[#55574F]">
+              当前定时：<span className="font-mono font-bold text-[#242620]">{initialSchedule.timeStr}</span> · {initialSchedule.title}
+            </div>
+          )}
+
           {/* 1. 提醒时间与标题 */}
+          {(mode === 'create' || mode === 'schedule') && (
           <div className="kid-card space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -287,13 +325,15 @@ export const ScheduleFormModal: React.FC<Props> = ({
               </div>
             </div>
           </div>
+          )}
 
           {/* 2. 音源类型选择（爸妈克隆声音 TTS / 小铭同学萌音 TTS / 家长直接录音） */}
+          {(mode === 'create' || mode === 'voice') && (
           <div className="kid-card space-y-3">
             <div className="text-caption text-[#1F2937]">选择播报声音类型：</div>
             <div className="grid grid-cols-3 gap-1.5">
               {[
-                { label: '爸妈克隆音 (文字合成)', value: 'parent_clone' as const },
+                { label: '我的声音', value: 'parent_clone' as const },
                 { label: `${petConfig.petName}萌音`, value: 'tts' as const },
                 { label: '直接录原声', value: 'record' as const },
               ].map(opt => (
@@ -310,12 +350,12 @@ export const ScheduleFormModal: React.FC<Props> = ({
               ))}
             </div>
 
-            {/* 当选择“爸妈克隆音”时，展示已克隆的爸爸/妈妈音色选择器 */}
+            {/* 当选择“我的声音”时，展示已克隆的爸爸/妈妈音色选择器 */}
             {sourceType === 'parent_clone' && (
               <div className="p-2.5 rounded-xl bg-[#FAF8F5] border border-[#E8D9C8] space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-[#242620]">
-                    选择要用哪位家长的克隆声音播报：
+                    选择「我的声音」音色：
                   </span>
                   {onOpenCloneStudio && (
                     <button
@@ -324,13 +364,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
                       className="text-[11px] font-bold text-[#B96043] inline-flex items-center gap-1"
                     >
                       <IconSparkle className="w-3 h-3" />
-                      <span>去录制/管理克隆声音 →</span>
+                      <span>去新增/管理声音 →</span>
                     </button>
                   )}
                 </div>
                 {voiceClones.length === 0 ? (
                   <div className="text-xs text-[#8B8A80] py-2">
-                    尚未录制任何爸妈克隆声音。请点击右上角「去录制/管理克隆声音」添加，或选择「萌音」播报。
+                    「我的声音」中暂无可用音色，请点击右上角「去新增/管理声音」添加，或选择「萌音」播报。
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
@@ -351,25 +391,14 @@ export const ScheduleFormModal: React.FC<Props> = ({
               </div>
             )}
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-caption text-[#1F2937]">
-                  {sourceType === 'parent_clone'
-                    ? `输入文字（自动用${selectedCloneProfile?.speakerRole || '爸妈'}克隆声音合成播报）*`
-                    : sourceType === 'tts'
-                    ? `输入文字（用${petConfig.petName}声音播报）*`
-                    : '录音内容备注 *'}
-                </label>
-                <button
-                  type="button"
-                  disabled={previewing}
-                  onClick={handlePreviewVoice}
-                  className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
-                >
-                  <IconVolume className="w-3.5 h-3.5" />
-                  <span>{previewing ? '豆包合成中…' : '豆包TTS合成试听'}</span>
-                </button>
-              </div>
+            <div className="space-y-2">
+              <label className="text-caption text-[#1F2937] block">
+                {sourceType === 'parent_clone'
+                  ? `输入文字（自动用${selectedCloneProfile?.speakerRole || '爸妈'}克隆声音合成播报）*`
+                  : sourceType === 'tts'
+                  ? `输入文字（用${petConfig.petName}声音播报）*`
+                  : '录音内容备注 *'}
+              </label>
               <textarea
                 rows={3}
                 value={textContent}
@@ -378,6 +407,22 @@ export const ScheduleFormModal: React.FC<Props> = ({
                 className="kid-input"
                 maxLength={150}
               />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-[#8B8A80]">
+                  {textContent.length}/150 字
+                </span>
+                {sourceType !== 'record' && (
+                  <button
+                    type="button"
+                    disabled={previewing}
+                    onClick={handlePreviewVoice}
+                    className="kid-btn kid-btn-ghost kid-btn-sm !h-7 !min-h-[28px] !px-2.5 !text-[11px]"
+                  >
+                    <IconVolume className="w-3.5 h-3.5" />
+                    <span>{previewing ? '豆包合成中…' : '合成试听'}</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {sourceType === 'record' && (
@@ -405,8 +450,10 @@ export const ScheduleFormModal: React.FC<Props> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* 3. 连续播报次数与硬件说明 */}
+          {(mode === 'create' || mode === 'schedule') && (
           <div className="kid-card space-y-2.5">
             <div className="flex items-center justify-between">
               <div>
@@ -423,9 +470,12 @@ export const ScheduleFormModal: React.FC<Props> = ({
               />
             </div>
             <p className="text-[11px] text-[#8B8A80] pt-2 border-t border-[#F3F4F6]">
-              定时音频保存后，设备将在同步时获取任务。离线缓存与定时播放仍需设备端支持。
+              {mode === 'schedule'
+                ? '保存定时信息后，设备将在下次同步时更新响铃时间，无需重新合成语音。'
+                : '定时音频保存后，设备将在同步时获取任务。离线缓存与定时播放仍需设备端支持。'}
             </p>
           </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -437,9 +487,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
             className="w-full kid-btn kid-btn-primary kid-btn-lg"
           >
             {isSynthesizing
-              ? '正在调用豆包 TTS 合成爸妈克隆音频…'
-              : initialSchedule
-              ? '保存并重新合成豆包定时音频'
+              ? mode === 'schedule'
+                ? '正在保存定时信息…'
+                : '正在调用豆包 TTS 合成音频…'
+              : mode === 'schedule'
+              ? '保存定时信息（不重新合成语音）'
+              : mode === 'voice'
+              ? '重新合成并保存语音'
               : '通过豆包合成音频并下发设备定时播报'}
           </button>
         </div>

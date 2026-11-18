@@ -21,7 +21,7 @@ export interface AiChatLogRecord {
 
 export interface VoiceCloneRecord {
   id: string;
-  speakerRole: '妈妈' | '爸爸';
+  speakerRole: string;
   title: string;
   sampleText: string;
   providerVoiceId: string;
@@ -211,7 +211,7 @@ export async function listVoiceCloneProfiles(): Promise<VoiceCloneRecord[]> {
     `;
     return rows.map(r => ({
       id: String(r.id),
-      speakerRole: r.speaker_role === '爸爸' ? '爸爸' : '妈妈',
+      speakerRole: String(r.speaker_role || '自定义'),
       title: String(r.title),
       sampleText: String(r.sample_text || ''),
       providerVoiceId: String(r.provider_voice_id),
@@ -225,7 +225,7 @@ export async function listVoiceCloneProfiles(): Promise<VoiceCloneRecord[]> {
 
 export async function saveVoiceCloneProfile(params: {
   id?: string;
-  speakerRole: '妈妈' | '爸爸';
+  speakerRole: string;
   title: string;
   sampleText: string;
   providerVoiceId: string;

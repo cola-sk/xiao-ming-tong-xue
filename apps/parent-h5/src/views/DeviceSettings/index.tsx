@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Popup, Toast } from 'antd-mobile';
+import { Popup, Switch, Toast } from 'antd-mobile';
 import { DeleteOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
 import { IconDevice, IconPlus, IconBattery, IconWifi } from '../../components/Icons';
@@ -16,6 +16,8 @@ export const DeviceSettingsPage: React.FC = () => {
     selectDevice,
     petConfig,
     updatePetConfig,
+    autoPlayOnDevice,
+    setAutoPlayOnDevice,
   } = useAppStore();
 
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -184,7 +186,7 @@ export const DeviceSettingsPage: React.FC = () => {
         )}
       </section>
 
-      {/* 2. 设备喇叭音量与盲操按键说明 */}
+      {/* 2. 设备喇叭音量与微聊播报方式设置 */}
       <section className="kid-card space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -204,6 +206,33 @@ export const DeviceSettingsPage: React.FC = () => {
           onChange={e => handleVolumeChange(Number(e.target.value))}
           className="w-full accent-[#B96043]"
         />
+
+        <div className="pt-3 border-t border-[#F0EFEA] flex items-center justify-between gap-3">
+          <div>
+            <div className="text-caption text-[#1F2937] font-bold">
+              设备收到语音后直接外放播报
+            </div>
+            <p className="text-[11px] text-[#6B7280] mt-0.5">
+              关闭时仅响“叮咚”提示音并显示红点，等孩子点击屏幕再播
+            </p>
+          </div>
+          <Switch
+            checked={autoPlayOnDevice}
+            onChange={checked => {
+              setAutoPlayOnDevice(checked);
+              Toast.show({
+                content: checked
+                  ? '已开启：设备收到语音后直接外放'
+                  : '已关闭：仅响“叮咚”提示音并显示红点',
+              });
+            }}
+            style={{
+              '--width': '38px',
+              '--height': '22px',
+              '--checked-color': '#4C7866',
+            }}
+          />
+        </div>
       </section>
 
       {/* 3. 硬件按键与触控盲操指南卡片 */}

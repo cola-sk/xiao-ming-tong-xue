@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { SafeArea } from 'antd-mobile';
 import { useAppStore } from '../stores/useAppStore';
-import { BrandLogoXiaoming, IconPaw, IconChatBubble, IconClock, IconDevice } from './Icons';
+import { BrandLogoXiaoming, IconMic, IconChatBubble, IconClock, IconDevice } from './Icons';
 
 import { WeChatVoicePage } from '../views/WeChatVoice';
 import { VoiceSchedulesPage } from '../views/VoiceSchedules';
@@ -35,8 +35,8 @@ export const Layout: React.FC = () => {
     },
     {
       key: 'pet-ai',
-      title: 'AI小宠',
-      icon: <IconPaw className="w-[18px] h-[18px]" />,
+      title: '我的声音',
+      icon: <IconMic className="w-[18px] h-[18px]" />,
     },
     {
       key: 'devices',

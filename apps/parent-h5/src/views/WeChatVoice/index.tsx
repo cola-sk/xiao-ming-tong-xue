@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Switch, Toast, Dialog } from 'antd-mobile';
+import { Toast, Dialog } from 'antd-mobile';
 import { useAppStore } from '../../stores/useAppStore';
 import { ChatVoiceMessage } from '../../services/types';
 import { IconMic, IconVolume, IconBattery, IconWifi } from '../../components/Icons';
@@ -26,22 +26,29 @@ function playRecordedAudio(url: string): Promise<void> {
 export const WeChatVoicePage: React.FC = () => {
   const {
     messages,
+    aiLogs,
     devices,
     selectedDeviceId,
     petConfig,
+    autoPlayOnDevice,
     sendParentVoiceMessage,
     markMessagePlayed,
     syncDevicesFromServer,
     syncMessagesFromServer,
+    syncPetAiFromServer,
   } = useAppStore();
+
+  const [activeSubTab, setActiveSubTab] = useState<'chat' | 'ai-logs'>('chat');
 
   useEffect(() => {
     void syncDevicesFromServer();
     void syncMessagesFromServer();
+    void syncPetAiFromServer();
     const syncWhenVisible = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
       void syncDevicesFromServer();
       void syncMessagesFromServer();
+      void syncPetAiFromServer();
     };
     const timer = window.setInterval(syncWhenVisible, 10000);
     document.addEventListener('visibilitychange', syncWhenVisible);
@@ -51,7 +58,7 @@ export const WeChatVoicePage: React.FC = () => {
       document.removeEventListener('visibilitychange', syncWhenVisible);
       window.removeEventListener('online', syncWhenVisible);
     };
-  }, [syncDevicesFromServer, syncMessagesFromServer]);
+  }, [syncDevicesFromServer, syncMessagesFromServer, syncPetAiFromServer]);
 
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([]);
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
@@ -88,7 +95,6 @@ export const WeChatVoicePage: React.FC = () => {
     });
   };
 
-  const [autoPlayOnDevice, setAutoPlayOnDevice] = useState(false);
   const [playingId, setPlayingId] = useState<string>('');
   const [recordState, setRecordState] = useState<'idle' | 'starting' | 'recording' | 'sending'>('idle');
   const isRecording = recordState === 'recording';
@@ -324,26 +330,46 @@ export const WeChatVoicePage: React.FC = () => {
           </div>
         </div>
 
-        {/* 家长发送模式设置 */}
-        <div className="mt-3 pt-2.5 border-t border-[#F0EFEA] flex items-center justify-between gap-2">
-          <div className="text-caption text-[#6B7280]">
-            <span>设备收到语音后直接外放播报</span>
-            <span className="block text-[10px] text-[#929187]">
-              关闭时仅响“叮咚”提示音并显示红点，等孩子点击屏幕再播
-            </span>
-          </div>
-          <Switch
-            checked={autoPlayOnDevice}
-            onChange={setAutoPlayOnDevice}
-            style={{
-              '--width': '38px',
-              '--height': '22px',
-              '--checked-color': '#4C7866',
-            }}
-          />
-        </div>
       </div>
 
+      {/* 子标签页切换：亲子微聊 / AI 伴聊记录 */}
+      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#EAE8E1]">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('chat')}
+          className={`h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            activeSubTab === 'chat'
+              ? 'bg-white text-[#242620] shadow-sm'
+              : 'text-[#77786F]'
+          }`}
+        >
+          <span>亲子双向微聊</span>
+          {visibleMessages.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F3F1EB] text-[#55574F]">
+              {visibleMessages.length}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('ai-logs')}
+          className={`h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            activeSubTab === 'ai-logs'
+              ? 'bg-white text-[#242620] shadow-sm'
+              : 'text-[#77786F]'
+          }`}
+        >
+          <span>AI 伴聊记录</span>
+          {aiLogs.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F3F1EB] text-[#55574F]">
+              {aiLogs.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeSubTab === 'chat' ? (
+        <>
       {/* 微信式语音气泡流 */}
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5 gap-2">
@@ -501,6 +527,59 @@ export const WeChatVoicePage: React.FC = () => {
           </form>
         )}
       </section>
+        </>
+      ) : (
+        <section className="space-y-2.5">
+          <div className="flex items-center justify-between px-0.5">
+            <h3 className="approval-section-title">最近 AI 伴聊记录</h3>
+            <span className="text-[11px] text-[#929187]">共 {aiLogs.length} 轮问答</span>
+          </div>
+
+          <div className="space-y-2.5">
+            {aiLogs.length === 0 ? (
+              <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
+                暂无 AI 伴聊记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
+              </div>
+            ) : (
+              aiLogs.map(log => (
+                <div key={log.id} className="kid-card space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-[#929187]">
+                    <span className="font-bold text-[#55574F]">宝贝提问</span>
+                    <span>
+                      {new Date(log.createdAt).toLocaleTimeString('zh-CN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <p className="text-body-lg text-[#242620]">“{log.childText}”</p>
+                  <div className="pt-2 border-t border-[#F0EFEA] flex items-start justify-between gap-2">
+                    <p className="text-body text-[#4C7866] flex-1">
+                      <strong className="font-bold">{petConfig.petName}：</strong>
+                      {log.petReplyText}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const tts = await requestDoubaoTtsAudio({
+                          text: log.petReplyText,
+                          voiceType: petConfig.voiceId,
+                          persist: false,
+                        });
+                        await playAudioOrFallback(tts.audioDataUrl, log.petReplyText);
+                      }}
+                      className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px] shrink-0"
+                    >
+                      <IconVolume className="w-3 h-3" />
+                      <span>实时试听</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 };

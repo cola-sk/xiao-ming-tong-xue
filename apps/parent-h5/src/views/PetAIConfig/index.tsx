@@ -1,39 +1,105 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Toast } from 'antd-mobile';
+import { Toast, Dialog } from 'antd-mobile';
+import { EditSOutline, DeleteOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
-import { PET_PERSONAS } from '../../services/types';
-import { BrandLogoXiaoming, IconVolume } from '../../components/Icons';
+import { PET_PERSONAS, VoiceCloneProfile } from '../../services/types';
+import { IconPlus, IconSparkle, IconVolume } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
+import { VoiceCloneModal } from '../VoiceSchedules/VoiceCloneModal';
 
 export const PetAIConfigPage: React.FC = () => {
-  const { petConfig, aiLogs, updatePetConfig, syncPetAiFromServer } = useAppStore();
+  const {
+    petConfig,
+    voiceClones,
+    updatePetConfig,
+    deleteVoiceCloneProfile,
+    syncPetAiFromServer,
+    syncVoiceClonesFromServer,
+  } = useAppStore();
 
   const [petName, setPetName] = useState(petConfig.petName);
+  const [selectedPersonaId, setSelectedPersonaId] = useState(petConfig.personaId);
+  const [selectedVoiceId, setSelectedVoiceId] = useState(petConfig.voiceId);
   const [customPrompt, setCustomPrompt] = useState(petConfig.customPrompt);
+  const [previewingId, setPreviewingId] = useState<string>('');
+  const [cloneModalVisible, setCloneModalVisible] = useState(false);
+  const [cloneModalMode, setCloneModalMode] = useState<'create' | 'retrain'>('create');
+  const [editingVoice, setEditingVoice] = useState<VoiceCloneProfile | null>(null);
+
+  const handleAddVoice = () => {
+    setEditingVoice(null);
+    setCloneModalMode('create');
+    setCloneModalVisible(true);
+  };
+
+  const handleEditVoice = (vc: VoiceCloneProfile) => {
+    setEditingVoice(vc);
+    setCloneModalMode('retrain');
+    setCloneModalVisible(true);
+  };
+
+  const handleDeleteVoice = (vc: VoiceCloneProfile) => {
+    Dialog.confirm({
+      title: '删除该声音？',
+      content: `删除后「${vc.title}」将从我的声音列表移除，已绑定该音色的定时任务需重新选择声音。`,
+      confirmText: '确认删除',
+      cancelText: '取消',
+      onConfirm: async () => {
+        try {
+          await deleteVoiceCloneProfile(vc.id);
+          Toast.show({ content: '已删除该声音' });
+        } catch {
+          Toast.show({ icon: 'fail', content: '删除失败，请重试' });
+        }
+      },
+    });
+  };
 
   useEffect(() => {
     void syncPetAiFromServer();
-    const timer = window.setInterval(() => {
-      void syncPetAiFromServer();
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [syncPetAiFromServer]);
+    void syncVoiceClonesFromServer();
+  }, [syncPetAiFromServer, syncVoiceClonesFromServer]);
 
   useEffect(() => {
     setPetName(petConfig.petName);
+    setSelectedPersonaId(petConfig.personaId);
+    setSelectedVoiceId(petConfig.voiceId);
     setCustomPrompt(petConfig.customPrompt);
-  }, [petConfig.petName, petConfig.customPrompt]);
+  }, [petConfig.petName, petConfig.personaId, petConfig.voiceId, petConfig.customPrompt]);
 
   const handleSelectPersona = (persona: (typeof PET_PERSONAS)[number]) => {
+    setSelectedPersonaId(persona.id);
+    setSelectedVoiceId(persona.voiceId);
     setCustomPrompt(persona.systemPrompt);
-    updatePetConfig({
-      personaId: persona.id,
-      voiceId: persona.voiceId,
-      customPrompt: persona.systemPrompt,
-    });
-    Toast.show({ content: `已切换为「${persona.name}」人设与音色` });
+  };
+
+  const handlePreviewVoice = async (
+    previewKey: string,
+    voiceType: string,
+    sampleText: string,
+    isClonedVoice = false
+  ) => {
+    if (previewingId) return;
+    setPreviewingId(previewKey);
+    try {
+      const tts = await requestDoubaoTtsAudio({
+        text: sampleText,
+        voiceType,
+        isClonedVoice,
+        persist: false,
+      });
+      if (!tts.ok && !tts.audioDataUrl) {
+        Toast.show({ icon: 'fail', content: tts.error || '试听合成失败' });
+        return;
+      }
+      await playAudioOrFallback(tts.audioDataUrl, sampleText);
+    } catch {
+      Toast.show({ icon: 'fail', content: '试听播放失败，请重试' });
+    } finally {
+      setPreviewingId('');
+    }
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -44,6 +110,8 @@ export const PetAIConfigPage: React.FC = () => {
     }
     updatePetConfig({
       petName: petName.trim(),
+      personaId: selectedPersonaId,
+      voiceId: selectedVoiceId,
       customPrompt: customPrompt.trim(),
     });
     Toast.show({ icon: 'success', content: 'AI 宠物人设已保存，下次对话立即生效' });
@@ -51,17 +119,99 @@ export const PetAIConfigPage: React.FC = () => {
 
   return (
     <div className="px-3.5 pt-3 pb-24 space-y-4 text-[#1F2937]">
-      {/* 1. AI 宠物名片与人设选择 */}
+      {/* 1. 我的声音管理（爸妈克隆音色） */}
+      <div className="kid-card-highlight space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <IconSparkle className="w-4 h-4 text-[#B96043] shrink-0" />
+              <h2 className="text-h2 text-[#242620]">我的声音管理</h2>
+              <span className="kid-status-chip kid-status-new">已克隆 {voiceClones.length} 个音色</span>
+            </div>
+            <p className="text-caption text-[#77786F] mt-1">
+              录制爸爸/妈妈声音样本，用于定时语音播报与专属声音合成。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleAddVoice}
+            className="kid-btn kid-btn-primary kid-btn-sm shrink-0"
+          >
+            <IconPlus className="w-3.5 h-3.5" />
+            <span>新增声音</span>
+          </button>
+        </div>
+
+        {voiceClones.length === 0 ? (
+          <div className="text-center py-5 text-xs text-[#8B8A80] bg-white/70 rounded-xl border border-dashed border-[#E8D9C8]">
+            暂无录制的声音，点击右上角「新增声音」开始录制或复刻
+          </div>
+        ) : (
+          <div className="space-y-2 pt-1">
+            {voiceClones.map(vc => (
+              <div
+                key={vc.id}
+                className="p-2.5 rounded-xl bg-white border border-[#E8D9C8] flex items-center justify-between gap-2 flex-wrap"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs text-[#242620] truncate">{vc.title}</span>
+                  </div>
+                  <div className="text-[10px] text-[#77786F] mt-1 font-mono truncate">
+                    音色 ID: {vc.providerVoiceId} · {({ ready: '可用', training: '训练中', failed: '训练失败', unknown: '状态待确认' } as const)[vc.status] || '状态待确认'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {vc.status === 'ready' && (
+                    <button
+                      type="button"
+                      disabled={previewingId === vc.id}
+                      onClick={() =>
+                        void handlePreviewVoice(
+                          vc.id,
+                          vc.providerVoiceId,
+                          `你好呀，我是${vc.title}，记得按时喝水休息哦！`,
+                          true
+                        )
+                      }
+                      className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                    >
+                      <IconVolume className="w-3 h-3" />
+                      <span>{previewingId === vc.id ? '合成中…' : '试听'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={vc.status === 'training'}
+                    onClick={() => handleEditVoice(vc)}
+                    className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                  >
+                    <EditSOutline />
+                    <span>编辑</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteVoice(vc)}
+                    className="kid-btn kid-btn-danger-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                  >
+                    <DeleteOutline />
+                    <span>删除</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 2. 小宠物声音与人设配置 */}
       <form onSubmit={handleSaveConfig} className="kid-card space-y-3.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <BrandLogoXiaoming className="w-11 h-11 rounded-2xl shrink-0" />
-            <div>
-              <h2 className="text-h2 text-[#1F2937]">AI 语音伴聊人设 ({petConfig.petName})</h2>
-              <p className="text-caption text-[#77786F]">
-                孩子按住设备触摸屏说话，松手即由大模型 + 萌宠 TTS 回复
-              </p>
-            </div>
+          <div>
+            <h2 className="text-h2 text-[#1F2937]">小宠物声音与人设 ({petConfig.petName})</h2>
+            <p className="text-caption text-[#77786F]">
+              孩子按住设备触摸屏说话，松手即由大模型 + 萌宠 TTS 回复
+            </p>
           </div>
         </div>
 
@@ -82,33 +232,59 @@ export const PetAIConfigPage: React.FC = () => {
           <div className="text-caption text-[#1F2937]">选择性格模板与萌宠音色：</div>
           <div className="grid grid-cols-1 gap-2">
             {PET_PERSONAS.map(p => {
-              const selected = petConfig.personaId === p.id;
+              const selected = selectedPersonaId === p.id;
+              const isPreviewing = previewingId === p.id;
               return (
-                <button
+                <div
                   key={p.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleSelectPersona(p)}
-                  className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between ${
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectPersona(p);
+                    }
+                  }}
+                  className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
                     selected
                       ? 'bg-[#FFFEFB] border-[#B96043] shadow-sm'
                       : 'bg-white border-[#E9E7E0]'
                   }`}
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-sm text-[#242620]">{p.name}</span>
                       <span className="kid-status-chip kid-status-new">{p.tag}</span>
                     </div>
                     <p className="text-xs text-[#77786F] mt-1 line-clamp-1">{p.systemPrompt}</p>
                   </div>
-                  <span
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                      selected ? 'border-[#B96043]' : 'border-[#D1D5DB]'
-                    }`}
-                  >
-                    {selected && <span className="w-2 h-2 rounded-full bg-[#B96043]" />}
-                  </span>
-                </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isPreviewing}
+                      onClick={e => {
+                        e.stopPropagation();
+                        void handlePreviewVoice(
+                          p.id,
+                          p.voiceId,
+                          `你好呀，我是${petName.trim() || '小铭同学'}，很高兴陪你一起探索奇妙世界！`
+                        );
+                      }}
+                      className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px]"
+                    >
+                      <IconVolume className="w-3 h-3" />
+                      <span>{isPreviewing ? '合成中…' : '试听'}</span>
+                    </button>
+                    <span
+                      className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                        selected ? 'border-[#B96043]' : 'border-[#D1D5DB]'
+                      }`}
+                    >
+                      {selected && <span className="w-2 h-2 rounded-full bg-[#B96043]" />}
+                    </span>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -133,57 +309,12 @@ export const PetAIConfigPage: React.FC = () => {
         </button>
       </form>
 
-      {/* 2. 最近伴聊问答记录 */}
-      <section className="space-y-2.5">
-        <div className="flex items-center justify-between px-0.5">
-          <h3 className="approval-section-title">最近 AI 伴聊记录</h3>
-          <span className="text-[11px] text-[#929187]">共 {aiLogs.length} 轮问答</span>
-        </div>
-
-        <div className="space-y-2.5">
-          {aiLogs.length === 0 ? (
-            <div className="kid-card text-center py-6 text-xs text-[#8B8A80]">
-              暂无 AI 伴聊记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
-            </div>
-          ) : (
-            aiLogs.map(log => (
-            <div key={log.id} className="kid-card space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-[#929187]">
-                <span className="font-bold text-[#55574F]">宝贝提问</span>
-                <span>
-                  {new Date(log.createdAt).toLocaleTimeString('zh-CN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-              </div>
-              <p className="text-body-lg text-[#242620]">“{log.childText}”</p>
-              <div className="pt-2 border-t border-[#F0EFEA] flex items-start justify-between gap-2">
-                <p className="text-body text-[#4C7866] flex-1">
-                  <strong className="font-bold">{petConfig.petName}：</strong>
-                  {log.petReplyText}
-                </p>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const tts = await requestDoubaoTtsAudio({
-                      text: log.petReplyText,
-                      voiceType: petConfig.voiceId,
-                      persist: false,
-                    });
-                    await playAudioOrFallback(tts.audioDataUrl, log.petReplyText);
-                  }}
-                  className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-2 !text-[11px] shrink-0"
-                >
-                  <IconVolume className="w-3 h-3" />
-                  <span>实时试听</span>
-                </button>
-              </div>
-            </div>
-          ))
-          )}
-        </div>
-      </section>
+      <VoiceCloneModal
+        visible={cloneModalVisible}
+        onClose={() => setCloneModalVisible(false)}
+        initialMode={cloneModalMode}
+        initialProfile={editingVoice}
+      />
     </div>
   );
 };

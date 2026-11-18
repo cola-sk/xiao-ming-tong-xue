@@ -64,11 +64,13 @@ interface AppState {
   voiceClones: VoiceCloneProfile[];
   petConfig: PetAiConfig;
   aiLogs: AiChatLog[];
+  autoPlayOnDevice: boolean;
+  setAutoPlayOnDevice: (enabled: boolean) => void;
 
   // Actions - 爸妈声音克隆
   addVoiceCloneProfile: (payload: {
     id?: string;
-    speakerRole: '妈妈' | '爸爸';
+    speakerRole: string;
     title: string;
     sampleText: string;
     sampleAudioUrl?: string;
@@ -122,6 +124,8 @@ export const useAppStore = create<AppState>()(
       voiceClones: INITIAL_VOICE_CLONES,
       petConfig: INITIAL_PET_CONFIG,
       aiLogs: INITIAL_AI_LOGS,
+      autoPlayOnDevice: false,
+      setAutoPlayOnDevice: enabled => set({ autoPlayOnDevice: enabled }),
 
       addVoiceCloneProfile: ({ id, speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId, status }) => {
         const state = get();
@@ -158,7 +162,7 @@ export const useAppStore = create<AppState>()(
               voiceClones: data.profiles.map((p: any) => ({
                 id: p.id,
                 familyId: s.family.id,
-                speakerRole: p.speakerRole === '爸爸' ? '爸爸' : '妈妈',
+                speakerRole: p.speakerRole || '自定义',
                 title: p.title,
                 sampleText: p.sampleText || '',
                 providerVoiceId: p.providerVoiceId,
@@ -557,6 +561,7 @@ export const useAppStore = create<AppState>()(
         voiceClones: s.voiceClones,
         petConfig: s.petConfig,
         aiLogs: s.aiLogs,
+        autoPlayOnDevice: s.autoPlayOnDevice,
       }),
     }
   )

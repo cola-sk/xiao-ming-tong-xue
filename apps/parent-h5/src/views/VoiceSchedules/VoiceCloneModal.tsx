@@ -16,14 +16,19 @@ import { startWavRecorder, WavRecorderHandle } from '../../utils/wavRecorder';
 interface Props {
   visible: boolean;
   onClose: () => void;
+  initialMode?: 'list' | 'create' | 'retrain';
+  initialProfile?: VoiceCloneProfile | null;
 }
 
-const SAMPLE_SCRIPTS: Record<'妈妈' | '爸爸', string> = {
-  妈妈: '堂堂、正正，我是妈妈！今天在学校开心吗？记得按时喝水，早点刷牙睡觉哦，妈妈最爱你们啦！',
-  爸爸: '堂堂、正正，我是爸爸！遇到不懂的问题可以问小铭同学，勇敢探索，爸爸等你们回家一起玩！',
-};
+const DEFAULT_SAMPLE_SCRIPT =
+  '堂堂、正正，今天在学校开心吗？记得按时喝水，早点刷牙睡觉哦，遇到不懂的问题可以问小铭同学！';
 
-export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
+export const VoiceCloneModal: React.FC<Props> = ({
+  visible,
+  onClose,
+  initialMode = 'list',
+  initialProfile = null,
+}) => {
   const {
     voiceClones,
     addVoiceCloneProfile,
@@ -35,8 +40,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
   const [editingProfile, setEditingProfile] = useState<VoiceCloneProfile | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [profilesLoaded, setProfilesLoaded] = useState(false);
-  const [speakerRole, setSpeakerRole] = useState<'妈妈' | '爸爸'>('妈妈');
-  const [title, setTitle] = useState('妈妈的温柔声音');
+  const [title, setTitle] = useState('');
   const [speakerIdInput, setSpeakerIdInput] = useState('');
   const [doubaoConfigured, setDoubaoConfigured] = useState<boolean | null>(null);
 
@@ -74,12 +78,18 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
   useEffect(() => {
     if (!visible) return;
-    setMode('list');
+    if (initialMode === 'create') {
+      openCreate();
+    } else if (initialMode === 'retrain' && initialProfile) {
+      openRetrain(initialProfile);
+    } else {
+      setMode('list');
+    }
     setProfilesLoaded(false);
     void loadProfiles();
   // Refresh when opening the manager.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [visible, initialMode, initialProfile]);
 
   useEffect(() => {
     if (!visible) return;
@@ -111,8 +121,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
   const openCreate = () => {
     setEditingProfile(null);
-    setSpeakerRole('妈妈');
-    setTitle('妈妈的温柔声音');
+    setTitle('');
     setSpeakerIdInput('');
     setRecordedWavUrl('');
     setRecordedWavBase64('');
@@ -121,20 +130,11 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
   const openRetrain = (profile: VoiceCloneProfile) => {
     setEditingProfile(profile);
-    setSpeakerRole(profile.speakerRole === '爸爸' ? '爸爸' : '妈妈');
     setTitle(profile.title);
     setSpeakerIdInput(profile.providerVoiceId);
     setRecordedWavUrl('');
     setRecordedWavBase64('');
     setMode('retrain');
-  };
-
-  const handleSelectRole = (role: '妈妈' | '爸爸') => {
-    setSpeakerRole(role);
-    setTitle(role === '妈妈' ? '妈妈的温柔声音' : '爸爸的鼓励声音');
-    setSpeakerIdInput('');
-    setRecordedWavUrl('');
-    setRecordedWavBase64('');
   };
 
   const startRecordSample = async () => {
@@ -200,6 +200,11 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
   };
 
   const handleSubmitClone = async () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      Toast.show({ content: '请先输入声音名称（如：妈妈、爸爸、爷爷讲故事）' });
+      return;
+    }
     if (!recordedWavBase64) {
       Toast.show({ content: '请先录制或上传 WAV/MP3 声音样本' });
       return;
@@ -211,19 +216,21 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       return;
     }
 
+    const resolvedRole = trimmedTitle.slice(0, 20);
+
     setIsCloning(true);
     try {
       const res = await fetch('/api/v1/voice-clone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          speakerRole,
-          title,
+          speakerRole: resolvedRole,
+          title: trimmedTitle,
           profileId: editingProfile?.id,
           speakerId: resolvedSpeakerId,
           audioBase64: recordedWavBase64,
           audioFormat,
-          sampleText: SAMPLE_SCRIPTS[speakerRole],
+          sampleText: DEFAULT_SAMPLE_SCRIPT,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -235,9 +242,9 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       const finalVoiceId = data.providerVoiceId || resolvedSpeakerId;
       addVoiceCloneProfile({
         id: data.profile?.id,
-        speakerRole,
-        title,
-        sampleText: SAMPLE_SCRIPTS[speakerRole],
+        speakerRole: resolvedRole,
+        title: trimmedTitle,
+        sampleText: DEFAULT_SAMPLE_SCRIPT,
         sampleAudioUrl: recordedWavUrl,
         providerVoiceId: finalVoiceId,
         status: data.profile?.status || 'training',
@@ -245,12 +252,16 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
       setRecordedWavUrl('');
       setRecordedWavBase64('');
       setSpeakerIdInput('');
-      setMode('list');
       void syncVoiceClonesFromServer();
       Toast.show({
         icon: 'success',
         content: editingProfile ? '已提交重新复刻，请等待训练完成' : '已提交复刻，请等待训练完成',
       });
+      if (initialMode !== 'list') {
+        onClose();
+      } else {
+        setMode('list');
+      }
     } catch {
       Toast.show({ icon: 'fail', content: '连接失败，请先查询音色状态后再决定是否重试' });
     } finally {
@@ -377,7 +388,6 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="kid-status-chip kid-status-complete">{vc.speakerRole}</span>
                         <span className="font-bold text-xs text-[#242620] truncate">{vc.title}</span>
                       </div>
                       <div className="text-[10px] text-[#77786F] mt-1 font-mono truncate">
@@ -438,36 +448,25 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
 
           {/* 2. 录制并上传新声音复刻 */}
           {mode !== 'list' && <div className="kid-card-highlight space-y-3">
-            <button type="button" onClick={() => setMode('list')} className="kid-btn kid-btn-ghost kid-btn-sm">← 返回我的声音</button>
+            {initialMode === 'list' && (
+              <button type="button" onClick={() => setMode('list')} className="kid-btn kid-btn-ghost kid-btn-sm">← 返回我的声音</button>
+            )}
             {mode === 'retrain' && <p className="text-xs text-[#9B742F]">将更新此音色并消耗一次训练机会。已有定时任务音频不会自动更新，需要重新保存任务。</p>}
             <div className="flex items-center justify-between">
               <span className="text-h3 text-[#242620] inline-flex items-center gap-1.5">
                 <IconSparkle className="w-4 h-4 text-[#B96043]" />
                 <span>{mode === 'create' ? '录制样本创建声音' : '录制新样本更新声音'}</span>
               </span>
-              <div className="flex gap-1.5">
-                {(['妈妈', '爸爸'] as const).map(role => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => handleSelectRole(role)}
-                    className={`kid-filter-chip !h-6 !min-h-[24px] !px-2.5 !text-[11px] ${
-                      speakerRole === role ? 'kid-filter-chip-selected' : ''
-                    }`}
-                  >
-                    我是{role}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
-                <label className="text-caption text-[#1F2937] block mb-1">音色显示名称 *</label>
+                <label className="text-caption text-[#1F2937] block mb-1">声音名称 *</label>
                 <input
                   type="text"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
+                  placeholder="例如：妈妈、爸爸、爷爷讲故事"
                   className="kid-input"
                   maxLength={30}
                 />
@@ -493,7 +492,7 @@ export const VoiceCloneModal: React.FC<Props> = ({ visible, onClose }) => {
                 请在安静环境下朗读以下文字（自动录制为 24kHz 单声道标准 WAV 格式，约 6~12 秒）：
               </div>
               <p className="text-sm font-bold text-[#B96043] leading-relaxed">
-                “{SAMPLE_SCRIPTS[speakerRole]}”
+                “{DEFAULT_SAMPLE_SCRIPT}”
               </p>
             </div>
 

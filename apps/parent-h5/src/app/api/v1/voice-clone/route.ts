@@ -38,7 +38,12 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') return NextResponse.json({ error: '请求格式无效' }, { status: 400 });
-  const speakerRole = body.speakerRole === '爸爸' ? '爸爸' : '妈妈';
+  const title =
+    typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 30) : '';
+  const speakerRole =
+    typeof body.speakerRole === 'string' && body.speakerRole.trim()
+      ? body.speakerRole.trim().slice(0, 20)
+      : title || '自定义';
   const speakerId = typeof body.speakerId === 'string' ? body.speakerId.trim() : '';
   const audioBase64 = typeof body.audioBase64 === 'string' ? body.audioBase64 : '';
   const audioFormat = body.audioFormat;
@@ -87,7 +92,7 @@ export async function POST(request: NextRequest) {
     const profile = await saveVoiceCloneProfile({
       id: existing?.id,
       speakerRole,
-      title: typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 30) : `${speakerRole}的声音`,
+      title: title || `${speakerRole}的声音`,
       sampleText: typeof body.sampleText === 'string' ? body.sampleText.trim().slice(0, 500) : '',
       providerVoiceId: result.speakerId,
       status: result.status === undefined ? 'training' : profileStatus(result.status),
