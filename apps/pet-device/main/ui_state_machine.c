@@ -32,12 +32,12 @@ static const char *TAG = "ui_state";
 #define COL_BORDER      0xDCEBE1
 #define COL_INK         0x1E2E2B
 #define COL_MUTED       0x627873
-#define COL_AI          0x0B5CAD
-#define COL_AI_DARK     0x073E7A
+#define COL_AI          0x1E82D0
+#define COL_AI_DARK     0x1567A8
 #define COL_AI_TINT     0xEAF6FF
 #define COL_AI_BORDER   0xBAE6FD
-#define COL_GREEN       0x0E7A50
-#define COL_GREEN_DARK  0x085436
+#define COL_GREEN       0x1E9E68
+#define COL_GREEN_DARK  0x157B50
 #define COL_GREEN_TINT  0xECFDF5
 #define COL_CHILD_BG    0xD1FAE5
 #define COL_CHILD_BD    0x6EE7B7
@@ -1075,30 +1075,28 @@ static void build_home_view(lv_obj_t *screen) {
     lv_obj_set_hidden(s_home_retry_btn, true);
     lv_obj_set_hidden(s_home_status_bar, true);
 
-    // 5. Persistent Bottom Dual Buttons (single line, 30px 1bpp 100% opaque pure white)
+    // 5. Persistent Bottom Dual Buttons (single line 30px font with gentle opacity)
     s_btn_ai = make_pill_btn(s_home_view, 218, 114, 26, COL_AI, 0xFFFFFF, NULL,
                              LV_EVENT_CLICKED, nav_ai_event, NULL);
-    lv_obj_set_style_border_width(s_btn_ai, 2, 0);
-    lv_obj_set_style_border_color(s_btn_ai, lv_color_hex(0x38BDF8), 0);
+    lv_obj_set_style_border_width(s_btn_ai, 1, 0);
+    lv_obj_set_style_border_color(s_btn_ai, lv_color_hex(0x93C5FD), 0);
+    lv_obj_set_style_border_opa(s_btn_ai, LV_OPA_60, 0);
     lv_obj_align(s_btn_ai, LV_ALIGN_BOTTOM_LEFT, 16, -18);
-    lv_obj_t *ai_t1 = make_label(s_btn_ai, LV_SYMBOL_AUDIO " AI 聊天", &s_btn_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(ai_t1, 2, 0);
-    lv_obj_align(ai_t1, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_t *ai_t2 = make_label(s_btn_ai, LV_SYMBOL_AUDIO " AI 聊天", &s_btn_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(ai_t2, 2, 0);
-    lv_obj_align(ai_t2, LV_ALIGN_CENTER, 1, 0);
+    lv_obj_t *ai_t = make_label(s_btn_ai, LV_SYMBOL_AUDIO " AI 聊天", &s_btn_font, 0xFFFFFF);
+    lv_obj_set_style_text_opa(ai_t, LV_OPA_80, 0);
+    lv_obj_set_style_text_letter_space(ai_t, 2, 0);
+    lv_obj_align(ai_t, LV_ALIGN_CENTER, 0, 0);
 
     s_btn_parent = make_pill_btn(s_home_view, 218, 114, 26, COL_GREEN, 0xFFFFFF, NULL,
                                  LV_EVENT_CLICKED, nav_chat_event, NULL);
-    lv_obj_set_style_border_width(s_btn_parent, 2, 0);
-    lv_obj_set_style_border_color(s_btn_parent, lv_color_hex(0x34D399), 0);
+    lv_obj_set_style_border_width(s_btn_parent, 1, 0);
+    lv_obj_set_style_border_color(s_btn_parent, lv_color_hex(0x86EFAC), 0);
+    lv_obj_set_style_border_opa(s_btn_parent, LV_OPA_60, 0);
     lv_obj_align(s_btn_parent, LV_ALIGN_BOTTOM_RIGHT, -16, -18);
-    lv_obj_t *pa_t1 = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX " 爸妈聊天", &s_btn_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(pa_t1, 2, 0);
-    lv_obj_align(pa_t1, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_t *pa_t2 = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX " 爸妈聊天", &s_btn_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(pa_t2, 2, 0);
-    lv_obj_align(pa_t2, LV_ALIGN_CENTER, 1, 0);
+    lv_obj_t *pa_t = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX " 爸妈聊天", &s_btn_font, 0xFFFFFF);
+    lv_obj_set_style_text_opa(pa_t, LV_OPA_80, 0);
+    lv_obj_set_style_text_letter_space(pa_t, 2, 0);
+    lv_obj_align(pa_t, LV_ALIGN_CENTER, 0, 0);
 
     s_parent_badge = make_panel(s_home_view, 32, 32, LV_RADIUS_CIRCLE, COL_RED, 0xFFFFFF, 2);
     lv_obj_align(s_parent_badge, LV_ALIGN_BOTTOM_RIGHT, -10, -106);
