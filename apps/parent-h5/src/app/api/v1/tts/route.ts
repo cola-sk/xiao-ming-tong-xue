@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import { isDoubaoConfigured, synthesizeDoubaoTts, getDoubaoVoiceCloneStatus } from '../../../../server/doubaoVoice';
 
@@ -7,13 +8,15 @@ import { isDoubaoConfigured, synthesizeDoubaoTts, getDoubaoVoiceCloneStatus } fr
  * - 支持传入豆包内置音色 (`BV700_V2_streaming` 等, cluster=`volcano_tts`) 合成「小铭同学」宠物语音 MP3
  */
 export async function POST(request: NextRequest) {
+  const access = await deviceAccess(request);
+  if (access.error) return access.error;
   const body = await request.json().catch(() => ({}));
   const text: string = (body.text || '').trim();
   const voiceType: string = (body.voiceType || '').trim();
   const isClonedVoice: boolean = Boolean(body.isClonedVoice);
   const speedRatio: number = Number(body.speedRatio) || 1.0;
   // 只有定时语音任务才传 persist: true 保存到数据库；其他试听或对话均不落库
-  const persist: boolean = Boolean(body.persist);
+  const persist: boolean = !access.deviceId && Boolean(body.persist);
 
   if (!text) {
     return NextResponse.json({ error: '请输入要合成语音的文字内容' }, { status: 400 });

@@ -82,6 +82,7 @@ static esp_err_t download_and_play_chat_audio(const char *msg_id, const char *au
     if (err == ESP_OK) {
         int content_len = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
+        device_pairing_handle_status(status);
         ESP_LOGI(TAG, "Downloaded parent WAV stream -> HTTP %d, bytes=%d", status, content_len);
         if (status == 200 && content_len > 0 && content_len <= 512 * 1024) {
             uint8_t *wav_buf = malloc((size_t)content_len);
@@ -135,6 +136,7 @@ static esp_err_t synthesize_and_play_text(const char *text) {
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
+        device_pairing_handle_status(status);
         ESP_LOGI(TAG, "TTS stream request for '%s' -> HTTP %d", text, status);
         audio_engine_play_local_file("/ram/tts_stream.mp3");
     }
@@ -144,7 +146,7 @@ static esp_err_t synthesize_and_play_text(const char *text) {
 }
 
 esp_err_t chat_client_ask_ai(const char *question_text) {
-    if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
 
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "deviceId", wifi_manager_get_device_id());
@@ -172,6 +174,7 @@ esp_err_t chat_client_ask_ai(const char *question_text) {
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
+        device_pairing_handle_status(status);
         int content_len = esp_http_client_get_content_length(client);
         ESP_LOGI(TAG, "AI Chat reply MP3 -> HTTP %d, bytes=%d", status, content_len);
         if (status == 200) {
@@ -187,7 +190,7 @@ esp_err_t chat_client_ask_ai(const char *question_text) {
 }
 
 esp_err_t chat_client_fetch_unread(void) {
-    if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
     if (s_pending_msg.valid) return ESP_OK;
 
     char url[256];
@@ -236,12 +239,8 @@ esp_err_t chat_client_fetch_unread(void) {
                          s_pending_msg.sender, s_pending_msg.text,
                          strlen(s_pending_msg.audio_url) > 0, s_pending_msg.auto_play);
 
-                if (s_pending_msg.auto_play) {
-                    chat_client_play_next_unread();
-                } else {
-                    // 切换至微聊页并点亮未读红点提示
-                    ui_switch_page(PET_PAGE_WECHAT);
-                }
+                // Playback is not implemented yet; retain the message unread.
+                ui_switch_page(PET_PAGE_WECHAT);
             }
             cJSON_Delete(root);
         }
@@ -273,7 +272,7 @@ esp_err_t chat_client_play_next_unread(void) {
 
 esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_len,
                                            const char *asr_text, int duration_sec) {
-    if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
 
     char local_msg_id[48];
     snprintf(local_msg_id, sizeof(local_msg_id), "msg_dev_%lld_%08lx", (long long)time(NULL), (unsigned long)esp_random());
@@ -330,6 +329,7 @@ esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_l
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
+        device_pairing_handle_status(status);
         ESP_LOGI(TAG, "Uploaded child WeChat voice -> HTTP %d", status);
         if (status < 200 || status >= 300) err = ESP_FAIL;
     } else {

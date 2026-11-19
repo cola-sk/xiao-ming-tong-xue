@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listChatMessages,
@@ -14,7 +15,10 @@ export const dynamic = 'force-dynamic';
  * - PATCH: 标记消息已读 (`played`) 并触发清空临时中转音频
  */
 export async function GET(request: NextRequest) {
-  const deviceId = request.nextUrl.searchParams.get('deviceId') || undefined;
+  const requestedId = request.nextUrl.searchParams.get('deviceId') || undefined;
+  const access = await deviceAccess(request, requestedId);
+  if (access.error) return access.error;
+  const deviceId = access.deviceId || requestedId;
   const directionParam = request.nextUrl.searchParams.get('direction');
   const statusParam = request.nextUrl.searchParams.get('status');
 
@@ -56,6 +60,9 @@ export async function POST(request: NextRequest) {
   const durationSec = Number(body.durationSec || 3);
   const autoPlay = Boolean(body.autoPlay);
   const deviceId = body.deviceId ? String(body.deviceId) : 'default';
+  const access = await deviceAccess(request, deviceId);
+  if (access.error) return access.error;
+  if (access.deviceId && direction !== 'device_to_parent') return NextResponse.json({ error: '设备只能发送自己的语音' }, { status: 403 });
   const audioBase64 = typeof body.audioBase64 === 'string' ? body.audioBase64 : undefined;
   const audioMime = typeof body.audioMime === 'string' ? body.audioMime : undefined;
 

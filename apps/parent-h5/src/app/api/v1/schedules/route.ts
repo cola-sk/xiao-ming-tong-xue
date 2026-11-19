@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listVoiceSchedules,
@@ -16,7 +17,10 @@ export const dynamic = 'force-dynamic';
  * - DELETE: 删除定时任务
  */
 export async function GET(request: NextRequest) {
-  const deviceId = request.nextUrl.searchParams.get('deviceId') || undefined;
+  const requestedId = request.nextUrl.searchParams.get('deviceId') || undefined;
+  const access = await deviceAccess(request, requestedId);
+  if (access.error) return access.error;
+  const deviceId = access.deviceId || requestedId;
   try {
     const schedules = await listVoiceSchedules(deviceId);
     return NextResponse.json({

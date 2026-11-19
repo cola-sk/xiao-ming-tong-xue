@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listDevicesWithStatus,
-  registerDeviceFromParent,
   updateDeviceVolume,
   deleteDeviceById,
 } from '@/server/deviceStore';
+
+import { revokeDeviceCredential } from '@/server/devicePairing';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,24 +44,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'ok', device: updated });
     }
 
-    const deviceId = String(body.deviceId || '').trim();
-    const alias = String(body.alias || '').trim();
-    const childNickname = String(body.childNickname || '').trim();
-
-    if (!deviceId) {
-      return NextResponse.json(
-        { error: '请填写设备 ID（可在 ESP32 串口日志或屏幕配对界面查看，如 esp32_pet_a1b2）' },
-        { status: 400 }
-      );
-    }
-
-    const device = await registerDeviceFromParent({
-      deviceId,
-      alias: alias || `${childNickname || '宝贝'}的小铭同学`,
-      childNickname: childNickname || '宝贝',
-    });
-
-    return NextResponse.json({ status: 'ok', device });
+    return NextResponse.json({ error: '请使用设备屏幕上的绑定码进行配对' }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '设备操作失败' },
@@ -75,6 +59,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: '缺少 deviceId 参数' }, { status: 400 });
   }
   try {
+    await revokeDeviceCredential(deviceId);
     await deleteDeviceById(deviceId);
     return NextResponse.json({ status: 'ok', deletedDeviceId: deviceId });
   } catch (err) {

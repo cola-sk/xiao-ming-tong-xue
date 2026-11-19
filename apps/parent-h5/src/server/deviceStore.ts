@@ -1,5 +1,6 @@
 import 'server-only';
 import { ensureNeonSchema, getNeonSql } from './neonDb';
+import { isDeviceBound } from './devicePairing';
 
 export interface DeviceRecord {
   id: string;
@@ -200,12 +201,15 @@ export async function listDevicesWithStatus(): Promise<DeviceRecord[]> {
   if (sql) {
     await ensureNeonSchema();
     const rows = await sql`
-      SELECT * FROM devices ORDER BY created_at ASC
+      SELECT devices.* FROM devices
+      JOIN device_credentials ON device_credentials.device_id = devices.id AND device_credentials.revoked_at IS NULL
+      ORDER BY devices.created_at ASC
     `;
     return rows.map(r => mapRow(r as Record<string, unknown>));
   }
 
-  return Array.from(memoryDeviceMap.values()).map(d => ({
+  const bound = await Promise.all(Array.from(memoryDeviceMap.values()).map(async device => await isDeviceBound(device.id) ? device : null));
+  return bound.filter((d): d is DeviceRecord => d !== null).map(d => ({
     ...d,
     isOnline: computeIsOnline(d.lastSeenAt),
   }));

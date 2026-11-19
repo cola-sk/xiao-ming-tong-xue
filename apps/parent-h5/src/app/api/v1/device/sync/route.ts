@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import { upsertDeviceHeartbeat } from '@/server/deviceStore';
 import {
@@ -21,6 +22,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const deviceId = String(body.deviceId || '').trim();
   const event = String(body.event || 'heartbeat').trim();
+  const access = await deviceAccess(request, deviceId);
+  if (access.error) return access.error;
 
   if (!deviceId) {
     return NextResponse.json(
@@ -42,9 +45,9 @@ export async function POST(request: NextRequest) {
 
     // 2) 若携带业务确认事件，同步落库
     if (event === 'alarm_ack' && body.taskId) {
-      await ackVoiceSchedule(String(body.taskId));
+      await ackVoiceSchedule(String(body.taskId), access.deviceId || undefined);
     } else if (event === 'voice_read' && body.msgId) {
-      await markChatMessagePlayed(String(body.msgId));
+      await markChatMessagePlayed(String(body.msgId), access.deviceId || undefined);
     }
 
     // 3) 查询待下行同步的任务与未读消息摘要

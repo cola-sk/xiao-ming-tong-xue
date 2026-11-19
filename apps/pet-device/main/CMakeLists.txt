@@ -2,10 +2,12 @@ idf_component_register(
     SRCS
         "main.c"
         "ui_state_machine.c"
+        "pet_font.c"
         "audio_engine.c"
         "rtc_scheduler.c"
         "wifi_manager.c"
         "device_sync.c"
+        "device_pairing.c"
         "chat_client.c"
         "chat_storage.c"
         "mqtt_client_mgr.c"
@@ -20,4 +22,6 @@ idf_component_register(
         mqtt
         mbedtls
         json
+        waveshare__esp32_s3_touch_amoled_2_16
+        lvgl__lvgl
 )

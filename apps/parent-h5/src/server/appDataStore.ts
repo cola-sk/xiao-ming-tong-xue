@@ -450,19 +450,19 @@ export async function toggleVoiceSchedule(id: string, enabled?: boolean): Promis
   return updated;
 }
 
-export async function ackVoiceSchedule(id: string): Promise<void> {
+export async function ackVoiceSchedule(id: string, deviceId?: string): Promise<void> {
   const sql = getNeonSql();
   if (sql) {
     await ensureNeonSchema();
     await sql`
       UPDATE voice_schedules
       SET last_ack_status = 'confirmed', last_ack_at = NOW(), updated_at = NOW()
-      WHERE id = ${id}
+      WHERE id = ${id} AND (${deviceId || null}::text IS NULL OR device_id = ${deviceId || null})
     `;
     return;
   }
   const existing = memSchedules.get(id);
-  if (existing) {
+  if (existing && (!deviceId || existing.deviceId === deviceId)) {
     memSchedules.set(id, {
       ...existing,
       lastAckStatus: 'confirmed',
@@ -596,7 +596,7 @@ export async function createChatMessage(params: {
  * 拉取未读微聊消息的临时中转音频（用于发声播放；已读清理后返回 null）
  */
 export async function getTransientChatAudio(
-  msgId: string
+  msgId: string, deviceId?: string
 ): Promise<{ buffer: Buffer; mimeType: string } | null> {
   const cleanId = msgId.replace(/\.(wav|mp3|webm)$/i, '');
   const sql = getNeonSql();
@@ -606,6 +606,7 @@ export async function getTransientChatAudio(
       SELECT pending_audio_base64, pending_audio_mime
       FROM chat_voice_messages
       WHERE id = ${cleanId}
+        AND (${deviceId || null}::text IS NULL OR (device_id = ${deviceId || null} AND direction = 'parent_to_device'))
       LIMIT 1
     `;
     if (rows.length > 0 && rows[0].pending_audio_base64) {
@@ -617,6 +618,8 @@ export async function getTransientChatAudio(
     return null;
   }
 
+  const message = memChatMessages.get(cleanId);
+  if (deviceId && (!message || message.deviceId !== deviceId || message.direction !== 'parent_to_device')) return null;
   const mem = memTransientAudio.get(cleanId);
   if (!mem) return null;
   return {
@@ -628,7 +631,7 @@ export async function getTransientChatAudio(
 /**
  * 标记消息已读并立即销毁中转音频数据（阅后即焚，不长期保存聊天录音）
  */
-export async function markChatMessagePlayed(id: string): Promise<void> {
+export async function markChatMessagePlayed(id: string, deviceId?: string): Promise<void> {
   const sql = getNeonSql();
   if (sql) {
     await ensureNeonSchema();
@@ -638,12 +641,13 @@ export async function markChatMessagePlayed(id: string): Promise<void> {
           audio_url = '',
           pending_audio_base64 = NULL,
           pending_audio_mime = NULL
-      WHERE id = ${id}
+      WHERE id = ${id} AND (${deviceId || null}::text IS NULL OR (device_id = ${deviceId || null} AND direction = 'parent_to_device'))
     `;
     return;
   }
-  memTransientAudio.delete(id);
   const existing = memChatMessages.get(id);
+  if (deviceId && (!existing || existing.deviceId !== deviceId || existing.direction !== 'parent_to_device')) return;
+  memTransientAudio.delete(id);
   if (existing) {
     memChatMessages.set(id, { ...existing, status: 'played', audioUrl: '' });
   }

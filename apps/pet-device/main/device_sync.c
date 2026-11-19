@@ -84,6 +84,7 @@ static void apply_server_config(const char *resp_json) {
 }
 
 static esp_err_t post_sync_payload(const char *event_name, const char *extra_key, const char *extra_val) {
+    if (!device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
     if (!wifi_manager_is_connected()) {
         ESP_LOGW(TAG, "Skip sync (%s): Wi-Fi not connected", event_name ? event_name : "heartbeat");
         return ESP_ERR_INVALID_STATE;
@@ -111,7 +112,7 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = 8000,
+        .timeout_ms = 25000,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = true,
         .event_handler = http_event_handler,
@@ -126,6 +127,7 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
+        device_pairing_handle_status(status);
         ESP_LOGI(TAG, "Sync [%s] -> HTTP %d", event_name ? event_name : "heartbeat", status);
         if (status < 200 || status >= 300) err = ESP_FAIL;
         if (status == 200 && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) {

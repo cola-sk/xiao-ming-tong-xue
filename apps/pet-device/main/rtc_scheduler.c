@@ -146,7 +146,7 @@ void rtc_scheduler_sync_from_json(const char *schedules_json) {
 }
 
 esp_err_t rtc_scheduler_fetch_and_sync(void) {
-    if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
 
     char url[256];
     snprintf(url, sizeof(url), "%s/api/v1/schedules?deviceId=%s",

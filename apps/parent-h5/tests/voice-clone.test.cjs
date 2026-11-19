@@ -112,6 +112,7 @@ test('TTS rejects an unready clone before generating audio', async () => {
   let syntheses = 0;
   const api = load('src/app/api/v1/tts/route.ts', {
     'next/server': next,
+    '@/server/deviceAccess': { deviceAccess: async () => ({ deviceId: null, error: null }) },
     '../../../../server/doubaoVoice': {
       isDoubaoConfigured: () => true,
       getDoubaoVoiceCloneStatus: async () => ({ status: 1 }),

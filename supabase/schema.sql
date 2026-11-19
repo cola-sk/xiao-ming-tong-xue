@@ -154,3 +154,16 @@ CREATE TABLE IF NOT EXISTS public.chat_voice_messages (
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+
+-- Runtime device pairing: no shared firmware secret.
+CREATE TABLE IF NOT EXISTS device_credentials (
+  device_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+  revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS device_pairing_sessions (
+  device_id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, setup_hash TEXT NOT NULL,
+  token_nonce TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, claimed_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS device_pairing_limits (
+  bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at TIMESTAMPTZ NOT NULL
+);

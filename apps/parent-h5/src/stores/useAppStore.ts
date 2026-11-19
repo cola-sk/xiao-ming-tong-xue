@@ -106,7 +106,7 @@ interface AppState {
   syncPetAiFromServer: () => Promise<void>;
 
   // Actions - 设备与家庭管理（真实联网状态同步）
-  addDevice: (deviceId: string, alias: string, childNickname: string) => Promise<void>;
+  addDevice: (pairingCode: string, alias: string, childNickname: string) => Promise<void>;
   syncDevicesFromServer: () => Promise<void>;
   removeDevice: (deviceId: string) => Promise<void>;
   selectDevice: (deviceId: string) => void;
@@ -406,17 +406,16 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      addDevice: async (deviceIdInput, alias, childNickname) => {
+      addDevice: async (pairingCode, alias, childNickname) => {
         const state = get();
-        const deviceId = deviceIdInput.trim();
-        if (!deviceId) throw new Error('请输入设备 ID');
+        const code = pairingCode.trim();
+        if (!/^\d{8}$/.test(code)) throw new Error('请输入8位绑定码');
 
-        const res = await fetch('/api/v1/device/status', {
+        const res = await fetch('/api/v1/device/pairing/claim', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'bind',
-            deviceId,
+            code,
             alias: alias.trim() || `${childNickname.trim() || '宝贝'}的小铭同学`,
             childNickname: childNickname.trim() || '宝贝',
           }),
@@ -427,6 +426,7 @@ export const useAppStore = create<AppState>()(
         }
 
         const remoteDev = data.device;
+        if (!remoteDev?.id) throw new Error('绑定结果无效，请重新查询设备');
         const childId = `child-${Date.now()}`;
         const newChild: Child = {
           id: childId,
@@ -434,7 +434,7 @@ export const useAppStore = create<AppState>()(
           nickname: remoteDev?.childNickname || childNickname.trim() || '宝贝',
         };
         const newDevice: Device = {
-          id: remoteDev?.id || deviceId,
+          id: remoteDev.id,
           familyId: state.family.id,
           childId,
           alias: remoteDev?.alias || alias.trim() || `${newChild.nickname}的小铭同学`,
@@ -495,9 +495,10 @@ export const useAppStore = create<AppState>()(
       },
 
       removeDevice: async deviceId => {
-        await fetch(`/api/v1/device/status?deviceId=${encodeURIComponent(deviceId)}`, {
+        const response = await fetch(`/api/v1/device/status?deviceId=${encodeURIComponent(deviceId)}`, {
           method: 'DELETE',
         });
+        if (!response.ok) throw new Error('解绑失败，请重试');
         set(s => {
           const remaining = s.devices.filter(d => d.id !== deviceId);
           return {

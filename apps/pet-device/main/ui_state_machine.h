@@ -29,3 +29,5 @@ void ui_on_side_boot_key_hold_start(void);
 void ui_on_side_boot_key_hold_end(void);
 void ui_trigger_alarm_modal(const char *task_id, const char *title, const char *audio_path);
 void ui_ack_alarm_modal(void);
+void ui_set_voice_status(const char *status);
+void ui_set_pairing_status(const char *code, const char *status);

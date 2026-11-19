@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import { isDoubaoConfigured, synthesizeDoubaoTts } from '@/server/doubaoVoice';
 import { getPetAiConfig, appendAiChatLog } from '@/server/appDataStore';
@@ -21,6 +22,8 @@ function sanitizeTextForTts(text: string): string {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const deviceId: string = String(body.deviceId || 'default');
+  const access = await deviceAccess(request, deviceId);
+  if (access.error) return access.error;
   const question: string = (body.question || '你好呀').trim();
   const savedConfig = await getPetAiConfig(deviceId);
 

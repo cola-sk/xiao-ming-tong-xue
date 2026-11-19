@@ -1,3 +1,4 @@
+import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTransientChatAudio } from '@/server/appDataStore';
 
@@ -9,11 +10,13 @@ export const dynamic = 'force-dynamic';
  * - 音频仅在 `unread` 期间暂存，对方播放并上报 `voice_read` 后即刻清除，不在数据库长期留存
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: { id: string } }
 ) {
+  const access = await deviceAccess(request);
+  if (access.error) return access.error;
   const id = context.params.id || '';
-  const audio = await getTransientChatAudio(id);
+  const audio = await getTransientChatAudio(id, access.deviceId || undefined);
 
   if (!audio) {
     return NextResponse.json(

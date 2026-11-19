@@ -21,7 +21,7 @@ export const DeviceSettingsPage: React.FC = () => {
   } = useAppStore();
 
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [deviceIdInput, setDeviceIdInput] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
   const [alias, setAlias] = useState('');
   const [childNickname, setChildNickname] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -36,8 +36,8 @@ export const DeviceSettingsPage: React.FC = () => {
 
   const handleAddDevice = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!deviceIdInput.trim()) {
-      Toast.show({ content: '请输入设备 ID（可在 ESP32 串口日志查看）' });
+    if (!/^\d{8}$/.test(pairingCode.trim())) {
+      Toast.show({ content: '请输入设备屏幕上的8位绑定码' });
       return;
     }
     if (!childNickname.trim()) {
@@ -46,12 +46,12 @@ export const DeviceSettingsPage: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      await addDevice(deviceIdInput.trim(), alias, childNickname);
-      setDeviceIdInput('');
+      await addDevice(pairingCode.trim(), alias, childNickname);
+      setPairingCode('');
       setAlias('');
       setChildNickname('');
       setAddModalOpen(false);
-      Toast.show({ icon: 'success', content: '已绑定设备，等待 ESP32 联网心跳上线' });
+      Toast.show({ icon: 'success', content: '绑定成功，设备将自动连接' });
     } catch (err) {
       Toast.show({
         icon: 'fail',
@@ -104,7 +104,7 @@ export const DeviceSettingsPage: React.FC = () => {
               尚未绑定任何 ESP32-S3 硬件设备
             </p>
             <p className="text-[11px] text-[#9CA3AF]">
-              烧录固件并联网后，设备会自动向云端发送心跳；您也可以点击右上角「配对新设备」手动绑定设备 ID
+              让设备联网后，点击「配对新设备」，输入设备屏幕上的8位绑定码即可完成关联。
             </p>
           </div>
         ) : (
@@ -171,7 +171,7 @@ export const DeviceSettingsPage: React.FC = () => {
                       type="button"
                       onClick={e => {
                         e.stopPropagation();
-                        void removeDevice(dev.id);
+                        void removeDevice(dev.id).catch(err => Toast.show({ content: err instanceof Error ? err.message : '解绑失败' }));
                       }}
                       className="kid-btn kid-btn-danger-ghost kid-btn-sm !h-6 !min-h-[24px] !px-1.5"
                       title="解绑设备"
@@ -262,15 +262,20 @@ export const DeviceSettingsPage: React.FC = () => {
         <form onSubmit={handleAddDevice} className="p-5 pb-8 space-y-4 max-w-xl mx-auto">
           <h3 className="text-h1">配对「小铭同学」语音设备</h3>
           <div>
-            <label className="block text-caption mb-1">设备 ID (Device ID) *</label>
+            <label className="block text-caption mb-1">设备绑定码 *</label>
             <input
               type="text"
               required
-              value={deviceIdInput}
-              onChange={e => setDeviceIdInput(e.target.value)}
-              placeholder="例如：esp32_pet_a1b2（串口日志开机可见）"
+              inputMode="numeric"
+              pattern="[0-9]{8}"
+              maxLength={8}
+              autoComplete="off"
+              value={pairingCode}
+              onChange={e => setPairingCode(e.target.value.replace(/\D/g, ''))}
+              placeholder="输入设备屏幕上的8位数字"
               className="kid-input font-mono"
             />
+            <p className="text-caption text-[#9CA3AF] mt-2">设备联网后显示绑定码，10分钟内有效。请确认设备就在身边。</p>
           </div>
           <div>
             <label className="block text-caption mb-1">归属宝贝昵称 *</label>

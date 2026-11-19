@@ -133,6 +133,17 @@ export async function ensureNeonSchema(): Promise<void> {
       await sql`CREATE INDEX IF NOT EXISTS chat_messages_device_inbox_idx ON chat_voice_messages (device_id, direction, status, created_at, id)`;
       await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_base64 TEXT`;
       await sql`ALTER TABLE chat_voice_messages ADD COLUMN IF NOT EXISTS pending_audio_mime TEXT`;
+      await sql`CREATE TABLE IF NOT EXISTS device_credentials (
+        device_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS device_pairing_sessions (
+        device_id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, setup_hash TEXT NOT NULL,
+        token_nonce TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, claimed_at TIMESTAMPTZ
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS device_pairing_limits (
+        bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at TIMESTAMPTZ NOT NULL
+      )`;
     })().catch(err => {
       schemaReadyPromise = null;
       throw err;

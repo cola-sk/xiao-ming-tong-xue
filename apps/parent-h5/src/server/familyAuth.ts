@@ -14,8 +14,7 @@ async function digest(value: string): Promise<string> {
 export function authConfigured(): boolean {
   return Boolean(process.env.PET_FAMILY_USERNAME) &&
     (process.env.PET_FAMILY_PASSWORD || '').length >= 10 &&
-    (process.env.PET_SESSION_SECRET || '').length >= 32 &&
-    (process.env.PET_DEVICE_TOKEN || '').length >= 32;
+    (process.env.PET_SESSION_SECRET || '').length >= 32;
 }
 
 export async function safeEqual(a: string, b: string): Promise<boolean> {
