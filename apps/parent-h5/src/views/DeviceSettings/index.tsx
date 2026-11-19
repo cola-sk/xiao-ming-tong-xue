@@ -197,7 +197,7 @@ export const DeviceSettingsPage: React.FC = () => {
               选择您在家庭微聊中的身份称呼，仅在当前手机本地保存
             </p>
           </div>
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-[#F7EBE5] text-[#B96043]">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-[#FFF0EB] text-[#FF7A59]">
             {parentRole ? `当前：${parentRole}` : '未设置'}
           </span>
         </div>
@@ -229,7 +229,7 @@ export const DeviceSettingsPage: React.FC = () => {
             <h3 className="text-h3 text-[#1F2937]">ES8311 喇叭音量控制</h3>
             <p className="text-xs text-[#6B7280]">调节 AI 回复、微聊语音及定时闹钟的外放音量</p>
           </div>
-          <span className="font-mono font-bold text-sm text-[#B96043]">
+          <span className="font-mono font-bold text-sm text-[#FF7A59]">
             {petConfig.volumeLevel}%
           </span>
         </div>
@@ -240,7 +240,7 @@ export const DeviceSettingsPage: React.FC = () => {
           step={5}
           value={petConfig.volumeLevel}
           onChange={e => handleVolumeChange(Number(e.target.value))}
-          className="w-full accent-[#B96043]"
+          className="w-full accent-[#FF7A59]"
         />
 
         <div className="pt-3 border-t border-[#F0EFEA] flex items-center justify-between gap-3">

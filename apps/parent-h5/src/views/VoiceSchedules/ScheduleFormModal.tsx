@@ -398,7 +398,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={onOpenCloneStudio}
-                      className="text-[11px] font-bold text-[#B96043] inline-flex items-center gap-1"
+                      className="text-[11px] font-bold text-[#FF7A59] inline-flex items-center gap-1"
                     >
                       <IconSparkle className="w-3 h-3" />
                       <span>去新增/管理声音 →</span>

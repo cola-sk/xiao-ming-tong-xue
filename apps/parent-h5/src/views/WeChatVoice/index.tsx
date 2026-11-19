@@ -481,8 +481,8 @@ export const WeChatVoicePage: React.FC = () => {
           <div className="shrink-0 pt-2">
             {isRecording ? (
               <div className="flex items-center gap-2 rounded-full bg-white p-1.5 pl-3 shadow-[0_2px_8px_rgba(36,38,32,0.06)]">
-                <div className="flex items-center gap-1.5 text-[#B96043] font-bold text-xs shrink-0 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-[#B96043]" />
+                <div className="flex items-center gap-1.5 text-[#FF7A59] font-bold text-xs shrink-0 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-[#FF7A59]" />
                   <span>录音中 {recordSeconds}s</span>
                 </div>
                 <button
@@ -495,7 +495,7 @@ export const WeChatVoicePage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => void finishRecord(true)}
-                  className="h-9 px-4 rounded-full bg-[#B96043] text-white font-bold text-xs flex-1"
+                  className="h-9 px-4 rounded-full bg-[#FF7A59] hover:bg-[#F06445] text-white font-bold text-xs flex-1"
                 >
                   结束并发送
                 </button>
@@ -507,7 +507,7 @@ export const WeChatVoicePage: React.FC = () => {
                   value={textInput}
                   onChange={e => setTextInput(e.target.value)}
                   placeholder={`以「${currentRole}」身份发语音…`}
-                  className="flex-1 min-w-0 h-10 px-4 rounded-full bg-white text-xs text-[#242620] placeholder:text-[#A19F95] shadow-[0_1px_4px_rgba(36,38,32,0.06)] focus:outline-none focus:ring-2 focus:ring-[#B96043]/25 transition-all"
+                  className="flex-1 min-w-0 h-10 px-4 rounded-full bg-white text-xs text-[#242620] placeholder:text-[#A19F95] shadow-[0_1px_4px_rgba(36,38,32,0.06)] focus:outline-none focus:ring-2 focus:ring-[#FF7A59]/25 transition-all"
                   maxLength={120}
                   disabled={recordState !== 'idle'}
                 />
@@ -515,7 +515,7 @@ export const WeChatVoicePage: React.FC = () => {
                   <button
                     type="submit"
                     disabled={recordState !== 'idle'}
-                    className="h-10 px-4 rounded-full bg-[#B96043] text-white shrink-0 font-bold text-xs shadow-[0_2px_8px_rgba(185,96,67,0.22)] active:scale-95 transition-all"
+                    className="h-10 px-4 rounded-full bg-[#FF7A59] hover:bg-[#F06445] text-white shrink-0 font-bold text-xs shadow-[0_2px_8px_rgba(255,122,89,0.28)] active:scale-95 transition-all"
                   >
                     发送
                   </button>
@@ -524,7 +524,7 @@ export const WeChatVoicePage: React.FC = () => {
                     type="button"
                     disabled={recordState !== 'idle'}
                     onClick={() => void startRecord()}
-                    className="h-10 px-4 rounded-full bg-[#B96043] text-white shrink-0 flex items-center gap-1.5 font-bold text-xs shadow-[0_2px_8px_rgba(185,96,67,0.22)] active:scale-95 transition-all"
+                    className="h-10 px-4 rounded-full bg-[#FF7A59] hover:bg-[#F06445] text-white shrink-0 flex items-center gap-1.5 font-bold text-xs shadow-[0_2px_8px_rgba(255,122,89,0.28)] active:scale-95 transition-all"
                   >
                     <IconMic className="w-4 h-4" />
                     <span>

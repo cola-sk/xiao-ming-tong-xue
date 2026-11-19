@@ -4,24 +4,24 @@
 
 :root {
   color-scheme: light;
-  accent-color: #B96043;
+  accent-color: #FF7A59;
   --app-canvas: #F5F4F0;
   --app-surface: #FFFFFF;
   --app-ink: #242620;
   --app-muted: #77786F;
   --app-line: #E9E7E0;
   --app-forest: #3E493F;
-  --app-brand-red: #EF4444;
-  --app-accent: #B96043;
-  --app-accent-soft: #F7EBE5;
-  --app-gold: #A87525;
-  --app-gold-soft: #FBF3E2;
+  --app-brand-red: #FF6B6B;
+  --app-accent: #FF7A59;
+  --app-accent-soft: #FFF0EB;
+  --app-gold: #FF8E53;
+  --app-gold-soft: #FFF5EB;
   --app-success: #4C7866;
   --app-success-soft: #E9F2EC;
-  --adm-color-primary: #B96043;
+  --adm-color-primary: #FF7A59;
   --adm-color-success: #4C7866;
-  --adm-color-warning: #A87525;
-  --adm-color-danger: #B96043;
+  --adm-color-warning: #FF8E53;
+  --adm-color-danger: #FF6B6B;
   --adm-border-color: #E9E7E0;
   --adm-font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
@@ -400,10 +400,10 @@ html, body {
 }
 
 .approval-action-primary {
-  border: 1px solid #B96043;
-  background: #B96043;
+  border: 1px solid #FF7A59;
+  background: #FF7A59;
   color: #FFFFFF;
-  box-shadow: 0 3px 7px rgba(185, 96, 67, 0.16);
+  box-shadow: 0 3px 8px rgba(255, 122, 89, 0.24);
 }
 
 .approval-action {
@@ -420,8 +420,8 @@ html, body {
 }
 
 .approval-action-primary:hover {
-  background: #A95137;
-  box-shadow: 0 4px 10px rgba(185, 96, 67, 0.2);
+  background: #F06445;
+  box-shadow: 0 4px 10px rgba(255, 122, 89, 0.3);
 }
 
 .today-task-list {
@@ -608,7 +608,7 @@ h1, h2, h3, h4, .font-headline {
   border: none;
 }
 .kid-btn-primary:hover:not(:disabled) {
-  background-color: #A95137;
+  background-color: #F06445;
 }
 
 .kid-btn-secondary {
@@ -687,15 +687,15 @@ h1, h2, h3, h4, .font-headline {
 }
 .kid-input:focus {
   outline: none;
-  border-color: #18181B;
-  box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.12);
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px rgba(255, 122, 89, 0.16);
 }
 .kid-input:disabled {
   border-color: #E5E7EB;
   background-color: #F3F4F6;
 }
 
-/* 紧凑筛选标签（深炭黑选中态，干净高级） */
+/* 紧凑筛选标签（品牌珊瑚橙选中态） */
 .kid-filter-chip {
   height: 28px;
   min-height: 28px;
@@ -717,9 +717,9 @@ h1, h2, h3, h4, .font-headline {
   white-space: nowrap;
 }
 .kid-filter-chip-selected {
-  background-color: var(--app-forest);
+  background-color: var(--app-accent);
   color: #FFFFFF;
-  border-color: var(--app-forest);
+  border-color: var(--app-accent);
 }
 
 /* 轻量状态小标签 */

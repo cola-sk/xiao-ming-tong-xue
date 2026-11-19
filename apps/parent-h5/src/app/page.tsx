@@ -53,7 +53,7 @@ export default function HomePage() {
           <label className="block text-sm" htmlFor="family-password">家庭访问密码</label>
           <input id="family-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2" />
           {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-          <button disabled={busy} className="w-full rounded-lg bg-[#3E493F] text-white py-2 disabled:opacity-50">{busy ? '登录中…' : '进入家庭空间'}</button>
+          <button disabled={busy} className="w-full rounded-lg bg-[#FF7A59] hover:bg-[#F06445] text-white py-2 font-semibold transition-colors disabled:opacity-50">{busy ? '登录中…' : '进入家庭空间'}</button>
         </form>}
       </div>
     </main>
