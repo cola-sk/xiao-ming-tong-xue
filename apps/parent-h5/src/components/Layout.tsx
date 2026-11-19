@@ -60,10 +60,10 @@ export const Layout: React.FC = () => {
   ];
 
   return (
-    <div className="parent-app-shell flex flex-col min-h-screen antialiased">
+    <div className="parent-app-shell flex flex-col h-[100dvh] overflow-hidden antialiased">
       <SafeArea position="top" />
 
-      <header className="parent-app-header sticky top-0 z-40 select-none">
+      <header className="parent-app-header shrink-0 select-none">
         <div className="parent-app-header-inner w-full max-w-xl mx-auto px-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <BrandLogoXiaoming className="w-9 h-9 shrink-0 rounded-xl shadow-sm" />
@@ -83,15 +83,27 @@ export const Layout: React.FC = () => {
       </header>
 
       {/* 主视图内容区 */}
-      <main className="flex-1 overflow-x-hidden w-full max-w-xl mx-auto">
+      <main className="flex-1 min-h-0 w-full max-w-xl mx-auto flex flex-col overflow-hidden">
         {activeTab === 'wechat' && <WeChatVoicePage />}
-        {activeTab === 'schedules' && <VoiceSchedulesPage />}
-        {activeTab === 'pet-ai' && <PetAIConfigPage />}
-        {activeTab === 'devices' && <DeviceSettingsPage />}
+        {activeTab === 'schedules' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <VoiceSchedulesPage />
+          </div>
+        )}
+        {activeTab === 'pet-ai' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <PetAIConfigPage />
+          </div>
+        )}
+        {activeTab === 'devices' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <DeviceSettingsPage />
+          </div>
+        )}
       </main>
 
       {/* 简洁底部导航栏 */}
-      <nav className="parent-bottom-nav fixed bottom-0 left-0 right-0 z-50 select-none">
+      <nav className="parent-bottom-nav shrink-0 z-40 select-none">
         <div className="max-w-xl mx-auto px-2 py-1 grid grid-cols-4">
           {tabs.map(item => {
             const isActive = activeTab === item.key;

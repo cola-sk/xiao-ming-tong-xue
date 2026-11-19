@@ -342,9 +342,9 @@ export const WeChatVoicePage: React.FC = () => {
   };
 
   return (
-    <div className="px-3.5 pt-3 pb-[calc(88px+env(safe-area-inset-bottom,0px))] space-y-3 text-[#1F2937]">
+    <div className="h-full flex-1 min-h-0 flex flex-col px-3.5 pt-2.5 pb-2 text-[#1F2937]">
       {/* 顶部设备在线与电量卡片 */}
-      <div className="family-overview-card">
+      <div className="family-overview-card shrink-0 mb-2">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
@@ -384,7 +384,7 @@ export const WeChatVoicePage: React.FC = () => {
       </div>
 
       {/* 子标签页切换：亲子聊 / AI聊天记录 */}
-      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#EAE8E1]">
+      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#EAE8E1] shrink-0 mb-2">
         <button
           type="button"
           onClick={() => setActiveSubTab('chat')}
@@ -420,40 +420,39 @@ export const WeChatVoicePage: React.FC = () => {
       </div>
 
       {activeSubTab === 'chat' ? (
-        <>
-      {/* 微信式语音气泡流 */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between px-1 text-[10px] text-[#929187]">
-          {(visibleMessages.length > 0 || localCacheStats.count > 0) ? (
-            <button
-              type="button"
-              onClick={clearLocalHistory}
-              className="text-[#B96043] underline"
-            >
-              清空本机记录
-            </button>
-          ) : (
-            <span />
-          )}
-          <span>
-            本地语音缓存 {localCacheStats.count} 条 (
-            {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
-          </span>
-        </div>
-
-        {/* 双向聊天消息固定高度滚动区：支持向上滚动查看历史消息 */}
-        <div className="relative">
-          <div
-            ref={chatListRef}
-            onScroll={handleChatScroll}
-            className="h-[340px] sm:h-[400px] overflow-y-auto p-3 rounded-2xl bg-[#F6F5F1] border border-[#E7E5DE] space-y-3 overscroll-contain shadow-inner"
-          >
-            {visibleMessages.length === 0 ? (
-              <div className="h-full min-h-[220px] flex items-center justify-center text-center p-6 text-xs text-[#8B8A80]">
-                暂无亲子聊记录，点击下方录音给宝贝发送语音
-              </div>
+        <div className="flex-1 min-h-0 flex flex-col gap-2">
+          {/* 清空本机记录与本地语音缓存统计 */}
+          <div className="shrink-0 flex items-center justify-between px-1 text-[10px] text-[#929187]">
+            {(visibleMessages.length > 0 || localCacheStats.count > 0) ? (
+              <button
+                type="button"
+                onClick={clearLocalHistory}
+                className="text-[#B96043] underline"
+              >
+                清空本机记录
+              </button>
             ) : (
-              visibleMessages.map(msg => {
+              <span />
+            )}
+            <span>
+              本地语音缓存 {localCacheStats.count} 条 (
+              {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
+            </span>
+          </div>
+
+          {/* 双向聊天消息固定高度滚动区：自动撑高，支持向上滚动查看历史消息 */}
+          <div className="flex-1 min-h-0 relative flex flex-col">
+            <div
+              ref={chatListRef}
+              onScroll={handleChatScroll}
+              className="flex-1 min-h-0 overflow-y-auto p-3 rounded-2xl bg-[#F6F5F1] border border-[#E7E5DE] space-y-3 overscroll-contain shadow-inner"
+            >
+              {visibleMessages.length === 0 ? (
+                <div className="h-full min-h-[160px] flex items-center justify-center text-center p-6 text-xs text-[#8B8A80]">
+                  暂无亲子聊记录，点击下方录音给宝贝发送语音
+                </div>
+              ) : (
+                visibleMessages.map(msg => {
             const isParent = msg.direction === 'parent_to_device';
             const isPlaying = playingId === msg.id;
             const isUnread = msg.status === 'unread';
@@ -535,93 +534,92 @@ export const WeChatVoicePage: React.FC = () => {
             );
           })
           )}
-          </div>
-
-          {/* 向上滚动查看历史消息时，提供快速回到底部的悬浮按钮 */}
-          {showScrollBottom && (
-            <button
-              type="button"
-              onClick={() => scrollToBottom(true)}
-              className="absolute bottom-3 right-3 z-20 px-2.5 py-1 rounded-full bg-white/95 text-[#55574F] text-[11px] font-semibold shadow-md border border-[#E5E3DC] flex items-center gap-1 hover:bg-white active:scale-95 transition-all backdrop-blur-sm"
-              title="回到底部最新消息"
-            >
-              <span>回到底部</span>
-              <span className="text-[10px]">↓</span>
-            </button>
-          )}
-        </div>
-      </section>
-
-      {/* 底部录音与快捷语音发送操作台 */}
-      <section className="kid-card !p-2 sticky bottom-[calc(62px+env(safe-area-inset-bottom,0px))] z-30 shadow-md bg-white/98 backdrop-blur-sm border border-[#E8E6DF]">
-        {isRecording ? (
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2 text-[#B96043] font-bold text-xs shrink-0 animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-[#B96043]" />
-              <span>录音中 {recordSeconds}s</span>
             </div>
-            <button
-              type="button"
-              onClick={() => void finishRecord(false)}
-              className="kid-btn kid-btn-ghost !h-10 flex-1 justify-center text-xs"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={() => void finishRecord(true)}
-              className="kid-btn kid-btn-primary !h-10 flex-1 justify-center text-xs"
-            >
-              结束并发送
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleQuickTextVoiceSend} className="flex items-center gap-2">
-            <input
-              type="text"
-              value={textInput}
-              onChange={e => setTextInput(e.target.value)}
-              placeholder={`以「${currentRole}」身份发语音…`}
-              className="kid-input flex-1 min-w-0 !h-10 !text-xs"
-              maxLength={120}
-              disabled={recordState !== 'idle'}
-            />
-            {textInput.trim() ? (
-              <button
-                type="submit"
-                disabled={recordState !== 'idle'}
-                className="kid-btn kid-btn-primary !h-10 !px-4 shrink-0 font-bold text-xs"
-              >
-                发送语音
-              </button>
-            ) : (
+
+            {/* 向上滚动查看历史消息时，提供快速回到底部的悬浮按钮 */}
+            {showScrollBottom && (
               <button
                 type="button"
-                disabled={recordState !== 'idle'}
-                onClick={() => void startRecord()}
-                className="kid-btn kid-btn-primary !h-10 !px-3.5 shrink-0 flex items-center gap-1.5 font-bold text-xs"
+                onClick={() => scrollToBottom(true)}
+                className="absolute bottom-3 right-3 z-20 px-2.5 py-1 rounded-full bg-white/95 text-[#55574F] text-[11px] font-semibold shadow-md border border-[#E5E3DC] flex items-center gap-1 hover:bg-white active:scale-95 transition-all backdrop-blur-sm"
+                title="回到底部最新消息"
               >
-                <IconMic className="w-4 h-4" />
-                <span>
-                  {recordState === 'starting'
-                    ? '开启中…'
-                    : recordState === 'sending'
-                    ? '发送中…'
-                    : '点击录音'}
-                </span>
+                <span>回到底部</span>
+                <span className="text-[10px]">↓</span>
               </button>
             )}
-          </form>
-        )}
-      </section>
-        </>
+          </div>
+
+          {/* 底部录音与快捷语音发送操作台：自动吸底 */}
+          <section className="shrink-0 kid-card !p-2 bg-white/98 backdrop-blur-sm border border-[#E8E6DF] shadow-sm">
+            {isRecording ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2 text-[#B96043] font-bold text-xs shrink-0 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-[#B96043]" />
+                  <span>录音中 {recordSeconds}s</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void finishRecord(false)}
+                  className="kid-btn kid-btn-ghost !h-10 flex-1 justify-center text-xs"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void finishRecord(true)}
+                  className="kid-btn kid-btn-primary !h-10 flex-1 justify-center text-xs"
+                >
+                  结束并发送
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleQuickTextVoiceSend} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={textInput}
+                  onChange={e => setTextInput(e.target.value)}
+                  placeholder={`以「${currentRole}」身份发语音…`}
+                  className="kid-input flex-1 min-w-0 !h-10 !text-xs"
+                  maxLength={120}
+                  disabled={recordState !== 'idle'}
+                />
+                {textInput.trim() ? (
+                  <button
+                    type="submit"
+                    disabled={recordState !== 'idle'}
+                    className="kid-btn kid-btn-primary !h-10 !px-4 shrink-0 font-bold text-xs"
+                  >
+                    发送语音
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={recordState !== 'idle'}
+                    onClick={() => void startRecord()}
+                    className="kid-btn kid-btn-primary !h-10 !px-3.5 shrink-0 flex items-center gap-1.5 font-bold text-xs"
+                  >
+                    <IconMic className="w-4 h-4" />
+                    <span>
+                      {recordState === 'starting'
+                        ? '开启中…'
+                        : recordState === 'sending'
+                        ? '发送中…'
+                        : '点击录音'}
+                    </span>
+                  </button>
+                )}
+              </form>
+            )}
+          </section>
+        </div>
       ) : (
-        <section className="space-y-2.5">
-          <div className="flex items-center justify-end px-1 text-[11px] text-[#929187]">
+        <div className="flex-1 min-h-0 flex flex-col gap-2">
+          <div className="shrink-0 flex items-center justify-end px-1 text-[11px] text-[#929187]">
             <span>共 {aiLogs.length} 轮问答</span>
           </div>
 
-          <div className="space-y-2.5">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-0.5">
             {aiLogs.length === 0 ? (
               <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
                 暂无 AI 聊天记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
@@ -664,7 +662,7 @@ export const WeChatVoicePage: React.FC = () => {
               ))
             )}
           </div>
-        </section>
+        </div>
       )}
     </div>
   );
