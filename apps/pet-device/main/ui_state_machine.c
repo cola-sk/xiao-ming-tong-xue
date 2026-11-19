@@ -181,6 +181,21 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, const lv_font_t 
     return lbl;
 }
 
+// 20px 4bpp anti-aliased Chinese glyphs have ~65% peak stroke alpha, which looks washed out on colored buttons.
+// Stacking multiple passes compounds alpha to >95% pure white (#FFFFFF) and thickens the stroke.
+static lv_obj_t *make_bright_white_label(lv_obj_t *parent, const char *text, lv_align_t align,
+                                         int32_t x_ofs, int32_t y_ofs, bool bold_x) {
+    lv_obj_t *base = NULL;
+    int passes = bold_x ? 3 : 2;
+    for (int i = 0; i < passes; i++) {
+        lv_obj_t *lbl = make_label(parent, text, &pet_font, 0xFFFFFF);
+        lv_obj_set_style_text_letter_space(lbl, 1, 0);
+        lv_obj_align(lbl, align, x_ofs + (i == 2 ? 1 : 0), y_ofs);
+        if (i == 0) base = lbl;
+    }
+    return base;
+}
+
 static void set_label_if_changed(lv_obj_t *lbl, char *cache, size_t cap, const char *val) {
     if (!lbl || strcmp(cache, val) == 0) return;
     snprintf(cache, cap, "%s", val);
@@ -1074,38 +1089,26 @@ static void build_home_view(lv_obj_t *screen) {
     lv_obj_set_hidden(s_home_retry_btn, true);
     lv_obj_set_hidden(s_home_status_bar, true);
 
-    // 5. Persistent Bottom Dual Buttons (high contrast + bold title + dark inner pill for subtitle)
+    // 5. Persistent Bottom Dual Buttons (high contrast + multi-pass pure white text)
     s_btn_ai = make_pill_btn(s_home_view, 218, 114, 26, COL_AI, 0xFFFFFF, NULL,
                              LV_EVENT_CLICKED, nav_ai_event, NULL);
     lv_obj_set_style_border_width(s_btn_ai, 2, 0);
     lv_obj_set_style_border_color(s_btn_ai, lv_color_hex(0x38BDF8), 0);
     lv_obj_align(s_btn_ai, LV_ALIGN_BOTTOM_LEFT, 16, -18);
-    lv_obj_t *ai_t = make_label(s_btn_ai, LV_SYMBOL_AUDIO "  和 AI 聊天", &pet_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(ai_t, 1, 0);
-    lv_obj_align(ai_t, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_t *ai_t_bold = make_label(s_btn_ai, LV_SYMBOL_AUDIO "  和 AI 聊天", &pet_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(ai_t_bold, 1, 0);
-    lv_obj_align(ai_t_bold, LV_ALIGN_TOP_MID, 1, 20);
-    lv_obj_t *ai_pill = make_panel(s_btn_ai, 192, 34, 17, 0x063B73, 0x1E6BB8, 1);
+    make_bright_white_label(s_btn_ai, LV_SYMBOL_AUDIO "  和 AI 聊天", LV_ALIGN_TOP_MID, 0, 20, true);
+    lv_obj_t *ai_pill = make_panel(s_btn_ai, 192, 34, 17, 0x052E59, 0x1E6BB8, 1);
     lv_obj_align(ai_pill, LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_t *ai_s = make_label(ai_pill, "点击进入 · 语音对话", &pet_font, 0xFFFFFF);
-    lv_obj_center(ai_s);
+    make_bright_white_label(ai_pill, "点击进入 · 语音对话", LV_ALIGN_CENTER, 0, 0, false);
 
     s_btn_parent = make_pill_btn(s_home_view, 218, 114, 26, COL_GREEN, 0xFFFFFF, NULL,
                                  LV_EVENT_CLICKED, nav_chat_event, NULL);
     lv_obj_set_style_border_width(s_btn_parent, 2, 0);
     lv_obj_set_style_border_color(s_btn_parent, lv_color_hex(0x34D399), 0);
     lv_obj_align(s_btn_parent, LV_ALIGN_BOTTOM_RIGHT, -16, -18);
-    lv_obj_t *pa_t = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX "  和爸妈聊天", &pet_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(pa_t, 1, 0);
-    lv_obj_align(pa_t, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_t *pa_t_bold = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX "  和爸妈聊天", &pet_font, 0xFFFFFF);
-    lv_obj_set_style_text_letter_space(pa_t_bold, 1, 0);
-    lv_obj_align(pa_t_bold, LV_ALIGN_TOP_MID, 1, 20);
-    lv_obj_t *pa_pill = make_panel(s_btn_parent, 192, 34, 17, 0x074F33, 0x159965, 1);
+    make_bright_white_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX "  和爸妈聊天", LV_ALIGN_TOP_MID, 0, 20, true);
+    lv_obj_t *pa_pill = make_panel(s_btn_parent, 192, 34, 17, 0x053D27, 0x159965, 1);
     lv_obj_align(pa_pill, LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_t *pa_s = make_label(pa_pill, "发语音 · 看消息历史", &pet_font, 0xFFFFFF);
-    lv_obj_center(pa_s);
+    make_bright_white_label(pa_pill, "发语音 · 看消息历史", LV_ALIGN_CENTER, 0, 0, false);
 
     s_parent_badge = make_panel(s_home_view, 32, 32, LV_RADIUS_CIRCLE, COL_RED, 0xFFFFFF, 2);
     lv_obj_align(s_parent_badge, LV_ALIGN_BOTTOM_RIGHT, -10, -106);
