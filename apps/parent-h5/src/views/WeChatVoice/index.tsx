@@ -372,12 +372,12 @@ export const WeChatVoicePage: React.FC = () => {
 
       {activeSubTab === 'chat' ? (
         <div className="flex-1 min-h-0 flex flex-col">
-          {/* 双向聊天消息区：去外框无边界直铺画布，自动撑高，支持向上滚动查看历史消息 */}
+          {/* 双向聊天消息区：微信风格纯白画布，自动撑高，支持向上滚动查看历史消息 */}
           <div className="flex-1 min-h-0 relative flex flex-col">
             <div
               ref={chatListRef}
               onScroll={handleChatScroll}
-              className="flex-1 min-h-0 overflow-y-auto px-0.5 py-2 space-y-3.5 overscroll-contain"
+              className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 rounded-2xl bg-white space-y-3.5 overscroll-contain"
             >
               {visibleMessages.length === 0 ? (
                 <div className="h-full min-h-[160px] flex items-center justify-center text-center p-6 text-xs text-[#929187]">
@@ -394,30 +394,38 @@ export const WeChatVoicePage: React.FC = () => {
                       key={msg.id}
                       className={`flex flex-col ${isParent ? 'items-end' : 'items-start'}`}
                     >
-                      <div className="flex items-center gap-1.5 mb-1 px-1">
-                        <span className="text-[11px] font-semibold text-[#6E6F67]">{msg.senderName}</span>
-                        <span className="text-[10px] text-[#A8A69C]">
+                      <div className="flex items-center gap-1.5 mb-1 px-1.5">
+                        <span className="text-[11px] font-medium text-[#888888]">{msg.senderName}</span>
+                        <span className="text-[10px] text-[#B2B2B2]">
                           {new Date(msg.createdAt).toLocaleTimeString('zh-CN', {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
                         </span>
                         {isParent && (
-                          <span className="text-[10px] text-[#9A988E]">
+                          <span className="text-[10px] text-[#B2B2B2]">
                             · {msg.autoPlay ? '直接播报' : msg.status === 'played' ? '已听' : '待听'}
                           </span>
                         )}
                       </div>
 
-                      {/* 语音气泡（去外框线与内部分割线，清爽柔和） */}
-                      <div className="relative max-w-[82%]">
+                      {/* 微信风格语音气泡：对方浅灰 #EDEDED、自己微信绿 #95EC69、6px圆角与侧边小尖角 */}
+                      <div className={`relative max-w-[80%] ${isParent ? 'mr-1.5' : 'ml-1.5'}`}>
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none absolute top-[13px] w-2.5 h-2.5 rotate-45 rounded-[1px] ${
+                            isParent
+                              ? '-right-[4px] bg-[#95EC69]'
+                              : '-left-[4px] bg-[#EDEDED]'
+                          }`}
+                        />
                         <button
                           type="button"
                           onClick={() => handlePlayBubble(msg)}
-                          className={`w-full text-left px-3.5 py-2.5 transition-all active:scale-[0.98] ${
+                          className={`relative z-10 w-full text-left rounded-[6px] px-3 py-2 transition-opacity active:opacity-85 ${
                             isParent
-                              ? 'bg-[#B96043] text-white rounded-2xl rounded-tr-sm shadow-[0_2px_8px_rgba(185,96,67,0.18)]'
-                              : 'bg-white text-[#242620] rounded-2xl rounded-tl-sm shadow-[0_1px_4px_rgba(36,38,32,0.05)]'
+                              ? 'bg-[#95EC69] text-[#191919]'
+                              : 'bg-[#EDEDED] text-[#191919]'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-4">
@@ -425,18 +433,14 @@ export const WeChatVoicePage: React.FC = () => {
                               <IconVolume
                                 className={`w-4 h-4 ${isPlaying ? 'animate-pulse' : ''}`}
                               />
-                              <span className="font-bold text-xs">
+                              <span className="font-medium text-xs">
                                 {isPlaying ? '正在播放…' : `${msg.durationSec}" 语音消息`}
                               </span>
                             </div>
                           </div>
 
                           {msg.asrText && (
-                            <p
-                              className={`mt-1 text-xs leading-relaxed ${
-                                isParent ? 'text-white/85' : 'text-[#6E6F67]'
-                              }`}
-                            >
+                            <p className="mt-1 text-xs leading-relaxed text-[#191919]/75">
                               {msg.asrText}
                             </p>
                           )}
@@ -446,8 +450,8 @@ export const WeChatVoicePage: React.FC = () => {
                         {!isParent && isUnread && (
                           <span
                             className="
-                              absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#EF4444]
-                              ring-2 ring-[#F5F4F0]
+                              absolute -top-1 -right-1 z-20 w-2.5 h-2.5 rounded-full bg-[#FA5151]
+                              ring-2 ring-white
                             "
                             title="未读语音"
                           />
@@ -464,7 +468,7 @@ export const WeChatVoicePage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => scrollToBottom(true)}
-                className="absolute bottom-3 right-1 z-20 px-3 py-1 rounded-full bg-white/95 text-[#55574F] text-[11px] font-semibold shadow-[0_2px_10px_rgba(36,38,32,0.1)] flex items-center gap-1 hover:bg-white active:scale-95 transition-all backdrop-blur-sm"
+                className="absolute bottom-3 right-3 z-20 px-3 py-1 rounded-full bg-white/95 text-[#55574F] text-[11px] font-semibold shadow-[0_2px_10px_rgba(36,38,32,0.12)] flex items-center gap-1 hover:bg-white active:scale-95 transition-all backdrop-blur-sm"
                 title="回到底部最新消息"
               >
                 <span>回到底部</span>
