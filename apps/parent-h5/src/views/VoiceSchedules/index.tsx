@@ -214,7 +214,11 @@ export const VoiceSchedulesPage: React.FC = () => {
                     {renderRepeatDays(sched.repeatDays)}
                   </span>
                   <span>·</span>
-                  <span>连播 {sched.repeatPlayCount} 次</span>
+                  <span>
+                    {sched.requireAck
+                      ? `最多播 ${sched.repeatPlayCount} 次(需确认)`
+                      : `固定播 ${sched.repeatPlayCount} 次`}
+                  </span>
                   <span>·</span>
                   {sched.lastAckStatus === 'confirmed' && sched.lastAckAt ? (
                     <span className="text-[#4C7866] font-bold">

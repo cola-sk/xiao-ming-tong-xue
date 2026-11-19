@@ -106,11 +106,16 @@ export async function ensureNeonSchema(): Promise<void> {
           audio_url TEXT,
           audio_md5 TEXT,
           repeat_play_count INTEGER NOT NULL DEFAULT 2,
+          require_ack BOOLEAN NOT NULL DEFAULT FALSE,
           last_ack_status TEXT NOT NULL DEFAULT 'idle',
           last_ack_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+      `;
+      await sql`
+        ALTER TABLE voice_schedules
+        ADD COLUMN IF NOT EXISTS require_ack BOOLEAN NOT NULL DEFAULT FALSE
       `;
 
       // 7. 亲子双向微聊消息表 (chat_voice_messages) —— 仅在未读中转期间暂存 pending_audio，已读后即置 NULL 清空（不长期存库）

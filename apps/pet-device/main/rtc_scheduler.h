@@ -21,6 +21,7 @@ typedef struct {
     char audio_url[128];
     char audio_md5[40];
     uint8_t repeat_play_count;
+    bool require_ack;
     int last_triggered_yday;
     int last_triggered_min;
 } pet_schedule_t;

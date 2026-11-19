@@ -51,6 +51,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
   const [selectedCloneId, setSelectedCloneId] = useState<string>('');
   const [textContent, setTextContent] = useState('宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！');
   const [repeatPlayCount, setRepeatPlayCount] = useState(2);
+  const [requireAck, setRequireAck] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [previewing, setPreviewing] = useState(false);
@@ -65,6 +66,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setSelectedCloneId(initialSchedule.clonedVoiceId || voiceClones[0]?.id || '');
       setTextContent(initialSchedule.textContent);
       setRepeatPlayCount(initialSchedule.repeatPlayCount);
+      setRequireAck(Boolean(initialSchedule.requireAck));
     } else {
       setTitle('');
       setTimeStr('07:30');
@@ -73,6 +75,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setSelectedCloneId(voiceClones[0]?.id || '');
       setTextContent('宝贝快起床啦，太阳晒屁股喽！');
       setRepeatPlayCount(2);
+      setRequireAck(false);
     }
   }, [initialSchedule, visible, voiceClones]);
 
@@ -144,6 +147,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           repeatDays,
           cronExpr,
           repeatPlayCount,
+          requireAck,
         });
         Toast.show({
           icon: 'success',
@@ -217,6 +221,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           audioUrl,
           audioMd5,
           repeatPlayCount,
+          requireAck,
         });
         Toast.show({
           icon: 'success',
@@ -481,21 +486,55 @@ export const ScheduleFormModal: React.FC<Props> = ({
           </div>
           )}
 
-          {/* 3. 连续播报次数与硬件说明 */}
+          {/* 3. 播报结束方式与次数设置 */}
           {(mode === 'create' || mode === 'schedule') && (
-          <div className="kid-card space-y-2.5">
-            <div className="flex items-center justify-between">
+          <div className="kid-card space-y-3">
+            <div>
+              <div className="text-caption text-[#1F2937] mb-1.5">播报结束方式：</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  {
+                    label: '固定次数 · 播完即止',
+                    value: false,
+                  },
+                  {
+                    label: '需点确认 · 最大次数',
+                    value: true,
+                  },
+                ].map(opt => (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    onClick={() => {
+                      setRequireAck(opt.value);
+                      if (opt.value && repeatPlayCount < 3) setRepeatPlayCount(5);
+                    }}
+                    className={`kid-filter-chip !px-2.5 !text-[11px] ${
+                      requireAck === opt.value ? 'kid-filter-chip-selected' : ''
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#F3F4F6]">
               <div>
-                <div className="text-caption text-[#1F2937]">到点连续播报次数</div>
-                <div className="text-[11px] text-[#6B7280]">
-                  孩子点击设备触摸屏确认后会立即停止播报
+                <div className="text-caption text-[#1F2937]">
+                  {requireAck ? '最大播放次数' : '固定播放次数'}
+                </div>
+                <div className="text-[11px] text-[#6B7280] mt-0.5">
+                  {requireAck
+                    ? '一直播放至最大次数，直到点击设备确认按钮关闭弹窗才算结束'
+                    : '只播放设定的固定次数，播完后自动关闭弹窗直接结束'}
                 </div>
               </div>
               <Stepper
                 value={repeatPlayCount}
                 onChange={v => setRepeatPlayCount(v)}
                 min={1}
-                max={5}
+                max={20}
               />
             </div>
             <p className="text-[11px] text-[#8B8A80] pt-2 border-t border-[#F3F4F6]">

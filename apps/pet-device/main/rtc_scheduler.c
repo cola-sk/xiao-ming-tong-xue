@@ -131,12 +131,13 @@ static bool apply_json(const char *json, bool download) {
         snprintf(s->audio_url, sizeof(s->audio_url), "%s", str(item, "audioUrl")); snprintf(s->audio_md5, sizeof(s->audio_md5), "%s", str(item, "audioMd5"));
         s->hour = h; s->minute = m; s->enabled = cJSON_IsTrue(cJSON_GetObjectItem(item, "enabled"));
         cJSON *repeat = cJSON_GetObjectItem(item, "repeatPlayCount"); int repeats = cJSON_IsNumber(repeat) ? repeat->valueint : 2;
-        s->repeat_play_count = repeats < 1 ? 1 : repeats > 5 ? 5 : repeats;
+        s->repeat_play_count = repeats < 1 ? 1 : repeats > 20 ? 20 : repeats;
+        s->require_ack = cJSON_IsTrue(cJSON_GetObjectItem(item, "requireAck"));
         cJSON *days = cJSON_GetObjectItem(item, "repeatDays"), *d;
         cJSON_ArrayForEach(d, days) if (cJSON_IsNumber(d) && d->valueint >= 1 && d->valueint <= 7) s->repeat_mask |= 1 << d->valueint;
         // Empty repeatDays means one shot, matching the parent UI.
-        ESP_LOGI(TAG, "Sched item id=%s %02u:%02u enabled=%d mask=0x%02x md5=%s fired=%ld",
-                 s->id, s->hour, s->minute, s->enabled, s->repeat_mask, s->audio_md5, (long)last_fired(s));
+        ESP_LOGI(TAG, "Sched item id=%s %02u:%02u enabled=%d mask=0x%02x repeats=%u req_ack=%d md5=%s fired=%ld",
+                 s->id, s->hour, s->minute, s->enabled, s->repeat_mask, s->repeat_play_count, s->require_ack, s->audio_md5, (long)last_fired(s));
         if (schedule_needs_audio(s)) {
             char path[96];
             if (!cache_path(s, path)) {
@@ -232,7 +233,7 @@ static void rtc_monitor_task(void *arg) {
                 if (!cache_path(s, path) || stat(path, &cached) || cached.st_size <= 0 || cached.st_size > 1024 * 1024) continue;
                 s_active = *s; atomic_store(&s_alarm_ack, false); atomic_store(&s_alarm_active, true);
                 atomic_fetch_add(&s_version, 1);
-                ESP_LOGI(TAG, "Alarm due id=%s repeats=%u", s->id, s->repeat_play_count);
+                ESP_LOGI(TAG, "Alarm due id=%s repeats=%u req_ack=%d", s->id, s->repeat_play_count, s->require_ack);
                 ui_trigger_alarm_modal(s->id, s->title, path);
                 bool played = false;
                 for (int n = 0; n < s->repeat_play_count && !atomic_load(&s_alarm_ack); n++) {
@@ -243,10 +244,28 @@ static void rtc_monitor_task(void *arg) {
                         vTaskDelay(pdMS_TO_TICKS(300));
                     }
                 }
+                if (played || atomic_load(&s_alarm_ack)) {
+                    mark_fired(s, stamp);
+                }
+                if (s->require_ack && played && !atomic_load(&s_alarm_ack)) {
+                    ui_set_alarm_modal_subtitle("请点击下方按钮确认结束");
+                    while (!atomic_load(&s_alarm_ack)) {
+                        vTaskDelay(pdMS_TO_TICKS(200));
+                        bool still_enabled = false;
+                        xSemaphoreTake(s_lock, portMAX_DELAY);
+                        for (int k = 0; k < s_count; k++) {
+                            if (strcmp(s_schedules[k].id, s->id) == 0 && s_schedules[k].enabled) {
+                                still_enabled = true;
+                                break;
+                            }
+                        }
+                        xSemaphoreGive(s_lock);
+                        if (!still_enabled) break;
+                    }
+                }
                 bool acked = atomic_exchange(&s_alarm_ack, false);
                 if (acked || (played && s->repeat_mask == 0)) save_ack(s_active.id);
                 if (played || acked) {
-                    mark_fired(s, stamp);
                     if (s->repeat_mask == 0) {
                         xSemaphoreTake(s_lock, portMAX_DELAY);
                         bool in_use = audio_md5_in_use(s_schedules, s_count, s->audio_md5, s->id);

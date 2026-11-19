@@ -31,12 +31,12 @@ static const char *TAG = "ui_state";
 #define COL_BORDER      0xDCEBE1
 #define COL_INK         0x1E2E2B
 #define COL_MUTED       0x627873
-#define COL_AI          0x2B9DF4
-#define COL_AI_DARK     0x0284C7
+#define COL_AI          0x0B5CAD
+#define COL_AI_DARK     0x073E7A
 #define COL_AI_TINT     0xEAF6FF
 #define COL_AI_BORDER   0xBAE6FD
-#define COL_GREEN       0x2DBE7E
-#define COL_GREEN_DARK  0x16A34A
+#define COL_GREEN       0x0E7A50
+#define COL_GREEN_DARK  0x085436
 #define COL_GREEN_TINT  0xECFDF5
 #define COL_CHILD_BG    0xD1FAE5
 #define COL_CHILD_BD    0x6EE7B7
@@ -98,7 +98,7 @@ static uint32_t s_rendered_chat_ver;
 static char s_bubble_ids[CHAT_HISTORY_MAX][48];
 
 // Alarm overlay widgets
-static lv_obj_t *s_alarm_panel, *s_alarm_ring, *s_alarm_bell_bg, *s_alarm_time, *s_alarm_title;
+static lv_obj_t *s_alarm_panel, *s_alarm_ring, *s_alarm_bell_bg, *s_alarm_time, *s_alarm_title, *s_alarm_sub;
 
 // Incoming parent message popup widgets
 static lv_obj_t *s_msg_popup, *s_msg_icon_ring, *s_msg_icon_bg;
@@ -1074,22 +1074,38 @@ static void build_home_view(lv_obj_t *screen) {
     lv_obj_set_hidden(s_home_retry_btn, true);
     lv_obj_set_hidden(s_home_status_bar, true);
 
-    // 5. Persistent Bottom Dual Buttons
+    // 5. Persistent Bottom Dual Buttons (high contrast + bold title + dark inner pill for subtitle)
     s_btn_ai = make_pill_btn(s_home_view, 218, 114, 26, COL_AI, 0xFFFFFF, NULL,
                              LV_EVENT_CLICKED, nav_ai_event, NULL);
+    lv_obj_set_style_border_width(s_btn_ai, 2, 0);
+    lv_obj_set_style_border_color(s_btn_ai, lv_color_hex(0x38BDF8), 0);
     lv_obj_align(s_btn_ai, LV_ALIGN_BOTTOM_LEFT, 16, -18);
     lv_obj_t *ai_t = make_label(s_btn_ai, LV_SYMBOL_AUDIO "  和 AI 聊天", &pet_font, 0xFFFFFF);
-    lv_obj_align(ai_t, LV_ALIGN_TOP_MID, 0, 26);
-    lv_obj_t *ai_s = make_label(s_btn_ai, "点击进入 · 语音对话", &pet_font, 0xE0F2FE);
-    lv_obj_align(ai_s, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_set_style_text_letter_space(ai_t, 1, 0);
+    lv_obj_align(ai_t, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_t *ai_t_bold = make_label(s_btn_ai, LV_SYMBOL_AUDIO "  和 AI 聊天", &pet_font, 0xFFFFFF);
+    lv_obj_set_style_text_letter_space(ai_t_bold, 1, 0);
+    lv_obj_align(ai_t_bold, LV_ALIGN_TOP_MID, 1, 20);
+    lv_obj_t *ai_pill = make_panel(s_btn_ai, 192, 34, 17, 0x063B73, 0x1E6BB8, 1);
+    lv_obj_align(ai_pill, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_t *ai_s = make_label(ai_pill, "点击进入 · 语音对话", &pet_font, 0xFFFFFF);
+    lv_obj_center(ai_s);
 
     s_btn_parent = make_pill_btn(s_home_view, 218, 114, 26, COL_GREEN, 0xFFFFFF, NULL,
                                  LV_EVENT_CLICKED, nav_chat_event, NULL);
+    lv_obj_set_style_border_width(s_btn_parent, 2, 0);
+    lv_obj_set_style_border_color(s_btn_parent, lv_color_hex(0x34D399), 0);
     lv_obj_align(s_btn_parent, LV_ALIGN_BOTTOM_RIGHT, -16, -18);
     lv_obj_t *pa_t = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX "  和爸妈聊天", &pet_font, 0xFFFFFF);
-    lv_obj_align(pa_t, LV_ALIGN_TOP_MID, 0, 26);
-    lv_obj_t *pa_s = make_label(s_btn_parent, "发语音 · 看消息历史", &pet_font, 0xDCFCE7);
-    lv_obj_align(pa_s, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_set_style_text_letter_space(pa_t, 1, 0);
+    lv_obj_align(pa_t, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_t *pa_t_bold = make_label(s_btn_parent, LV_SYMBOL_VOLUME_MAX "  和爸妈聊天", &pet_font, 0xFFFFFF);
+    lv_obj_set_style_text_letter_space(pa_t_bold, 1, 0);
+    lv_obj_align(pa_t_bold, LV_ALIGN_TOP_MID, 1, 20);
+    lv_obj_t *pa_pill = make_panel(s_btn_parent, 192, 34, 17, 0x074F33, 0x159965, 1);
+    lv_obj_align(pa_pill, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_t *pa_s = make_label(pa_pill, "发语音 · 看消息历史", &pet_font, 0xFFFFFF);
+    lv_obj_center(pa_s);
 
     s_parent_badge = make_panel(s_home_view, 32, 32, LV_RADIUS_CIRCLE, COL_RED, 0xFFFFFF, 2);
     lv_obj_align(s_parent_badge, LV_ALIGN_BOTTOM_RIGHT, -10, -106);
@@ -1231,8 +1247,8 @@ static void build_alarm_overlay(lv_obj_t *screen) {
     lv_obj_set_style_text_align(s_alarm_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_alarm_title, LV_ALIGN_TOP_MID, 0, 244);
 
-    lv_obj_t *sub = make_label(card, "定时语音播报中...", &pet_font, 0x9A3412);
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 298);
+    s_alarm_sub = make_label(card, "定时语音播报中...", &pet_font, 0x9A3412);
+    lv_obj_align(s_alarm_sub, LV_ALIGN_TOP_MID, 0, 298);
 
     lv_obj_t *ack = make_pill_btn(card, 240, 58, 29, COL_ALARM, 0xFFFFFF,
                                   "知道了 · 停止", LV_EVENT_PRESSED, alarm_ack_event, NULL);
@@ -1429,9 +1445,16 @@ void ui_trigger_alarm_modal(const char *id, const char *title, const char *path)
     }
     lv_label_set_text(s_alarm_time, tbuf);
     lv_label_set_text(s_alarm_title, (title && *title) ? title : "定时语音提醒");
+    if (s_alarm_sub) lv_label_set_text(s_alarm_sub, "定时语音播报中...");
     lv_obj_set_hidden(s_alarm_panel, false);
     lv_obj_move_foreground(s_alarm_panel);
     update_incoming_popup();
+    esp_lv_adapter_unlock();
+}
+
+void ui_set_alarm_modal_subtitle(const char *subtitle) {
+    if (!s_alarm_sub || esp_lv_adapter_lock(1000) != ESP_OK) return;
+    lv_label_set_text(s_alarm_sub, (subtitle && *subtitle) ? subtitle : "");
     esp_lv_adapter_unlock();
 }
 

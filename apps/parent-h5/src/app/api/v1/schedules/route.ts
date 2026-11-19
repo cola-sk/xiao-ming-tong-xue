@@ -77,7 +77,8 @@ export async function POST(request: NextRequest) {
       textContent,
       audioUrl: body.audioUrl ? String(body.audioUrl) : null,
       audioMd5: body.audioMd5 ? String(body.audioMd5) : null,
-      repeatPlayCount: Number(body.repeatPlayCount ?? 2),
+      repeatPlayCount: Math.max(1, Math.min(20, Number(body.repeatPlayCount ?? 2))),
+      requireAck: Boolean(body.requireAck),
     });
 
     return NextResponse.json({

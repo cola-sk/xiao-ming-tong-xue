@@ -95,7 +95,8 @@ export interface VoiceScheduleContract {
   textContent: string;           // TTS 文本或录音备注
   audioUrl?: string | null;
   audioMd5?: string | null;
-  repeatPlayCount: number;       // 到点连续播报次数 (1~5)
+  repeatPlayCount: number;       // 到点连续播报次数 (1~20)
+  requireAck?: boolean;          // true: 需点击确认按钮关闭弹窗才算结束（最多播 repeatPlayCount 次）; false: 播放固定次数直接结束
   lastAckStatus?: ScheduleAckStatus;
   lastAckAt?: string | null;
   createdAt: string;

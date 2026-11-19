@@ -44,6 +44,7 @@ export interface VoiceScheduleRecord {
   audioUrl: string | null;
   audioMd5: string | null;
   repeatPlayCount: number;
+  requireAck?: boolean;
   lastAckStatus: 'idle' | 'ringing' | 'confirmed';
   lastAckAt: string | null;
   createdAt: string;
@@ -320,6 +321,7 @@ function mapScheduleRow(r: Record<string, unknown>): VoiceScheduleRecord {
     audioUrl: r.audio_url ? String(r.audio_url) : null,
     audioMd5: r.audio_md5 ? String(r.audio_md5) : null,
     repeatPlayCount: Number(r.repeat_play_count ?? 2),
+    requireAck: Boolean(r.require_ack),
     lastAckStatus:
       r.last_ack_status === 'confirmed'
         ? 'confirmed'
@@ -371,13 +373,13 @@ export async function upsertVoiceSchedule(
       INSERT INTO voice_schedules (
         id, device_id, title, cron_expr, time_str, repeat_days, enabled,
         source_type, cloned_voice_id, cloned_speaker_role, text_content,
-        audio_url, audio_md5, repeat_play_count, updated_at
+        audio_url, audio_md5, repeat_play_count, require_ack, updated_at
       ) VALUES (
         ${id}, ${params.deviceId || 'default'}, ${params.title}, ${params.cronExpr},
         ${params.timeStr}, ${repeatDaysJson}::jsonb, ${params.enabled},
         ${params.sourceType}, ${params.clonedVoiceId || null}, ${params.clonedSpeakerRole || null},
         ${params.textContent}, ${safeAudioUrl}, ${params.audioMd5 || null},
-        ${params.repeatPlayCount}, NOW()
+        ${params.repeatPlayCount}, ${Boolean(params.requireAck)}, NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
         device_id = EXCLUDED.device_id,
@@ -393,6 +395,7 @@ export async function upsertVoiceSchedule(
         audio_url = COALESCE(EXCLUDED.audio_url, voice_schedules.audio_url),
         audio_md5 = COALESCE(EXCLUDED.audio_md5, voice_schedules.audio_md5),
         repeat_play_count = EXCLUDED.repeat_play_count,
+        require_ack = EXCLUDED.require_ack,
         updated_at = NOW()
       RETURNING *
     `;
@@ -415,6 +418,7 @@ export async function upsertVoiceSchedule(
     audioUrl: safeAudioUrl ?? existing?.audioUrl ?? null,
     audioMd5: params.audioMd5 ?? existing?.audioMd5 ?? null,
     repeatPlayCount: params.repeatPlayCount,
+    requireAck: Boolean(params.requireAck),
     lastAckStatus: existing?.lastAckStatus || 'idle',
     lastAckAt: existing?.lastAckAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),
