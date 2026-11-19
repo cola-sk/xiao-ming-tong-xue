@@ -1157,10 +1157,12 @@ static void build_ai_view(lv_obj_t *screen) {
     lv_obj_align(s_ai_retry_btn, LV_ALIGN_TOP_MID, 0, 326);
     lv_obj_set_hidden(s_ai_retry_btn, true);
 
-    s_ai_hold_btn = make_pill_btn(s_ai_view, 444, 76, 38, COL_AI, 0xFFFFFF,
-                                  LV_SYMBOL_AUDIO "  按住说话，问问 AI",
+    s_ai_hold_btn = make_pill_btn(s_ai_view, 444, 76, 38, COL_AI, 0xFFFFFF, NULL,
                                   LV_EVENT_ALL, hold_btn_event, (void *)(intptr_t)AUDIO_TARGET_AI);
     lv_obj_align(s_ai_hold_btn, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_t *ai_hold_lbl = make_label(s_ai_hold_btn, "按住说话，问问 AI", &s_btn_font, 0xFFFFFF);
+    lv_obj_set_style_text_opa(ai_hold_lbl, LV_OPA_COVER, 0);
+    lv_obj_center(ai_hold_lbl);
     lv_obj_set_hidden(s_ai_view, true);
 }
 
@@ -1218,10 +1220,12 @@ static void build_chat_view(lv_obj_t *screen) {
     lv_obj_align(s_chat_retry_btn, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_hidden(s_chat_retry_btn, true);
 
-    s_chat_hold_btn = make_pill_btn(s_chat_view, 444, 76, 38, COL_GREEN, 0xFFFFFF,
-                                    LV_SYMBOL_AUDIO "  按住说话，发给爸妈",
+    s_chat_hold_btn = make_pill_btn(s_chat_view, 444, 76, 38, COL_GREEN, 0xFFFFFF, NULL,
                                     LV_EVENT_ALL, hold_btn_event, (void *)(intptr_t)AUDIO_TARGET_PARENT);
     lv_obj_align(s_chat_hold_btn, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_t *chat_hold_lbl = make_label(s_chat_hold_btn, "按住说话，发给爸妈", &s_btn_font, 0xFFFFFF);
+    lv_obj_set_style_text_opa(chat_hold_lbl, LV_OPA_COVER, 0);
+    lv_obj_center(chat_hold_lbl);
     lv_obj_set_hidden(s_chat_view, true);
 }
 
