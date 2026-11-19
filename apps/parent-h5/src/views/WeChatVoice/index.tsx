@@ -202,7 +202,11 @@ export const WeChatVoicePage: React.FC = () => {
     startRef.current = true;
     setRecordState('starting');
     try {
-      const recorder = await startWavRecorder();
+      const recorder = await startWavRecorder({
+        outputFormat: 'mp3',
+        targetSampleRate: 16000,
+        mp3BitrateKbps: 32,
+      });
       if (!mountedRef.current || document.visibilityState !== 'visible') {
         await recorder.cancel();
         if (mountedRef.current) setRecordState('idle');
@@ -251,7 +255,7 @@ export const WeChatVoicePage: React.FC = () => {
         autoPlay: autoPlayOnDevice,
         audioBlob: recording.blob,
         audioBase64: recording.base64,
-        audioMime: 'audio/wav',
+        audioMime: recording.mime,
       });
       if (mountedRef.current) {
         refreshLocalStats();

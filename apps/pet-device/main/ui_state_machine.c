@@ -106,7 +106,7 @@ static lv_obj_t *s_msg_popup_title, *s_msg_popup_sub, *s_msg_play_btn, *s_msg_pl
 static char s_popup_msg_id[48];
 static char s_dismissed_msg_id[48];
 static bool s_popup_visible;
-static bool s_popup_was_playing;
+static chat_play_phase_t s_popup_last_phase = CHAT_PLAY_IDLE;
 
 // Pairing & Settings overlays
 static lv_obj_t *s_pairing_panel, *s_pairing_code, *s_pairing_status;
@@ -312,10 +312,10 @@ typedef struct {
 
 static void play_msg_task(void *arg) {
     play_arg_t *pa = (play_arg_t *)arg;
-    ui_set_voice_status("正在播放语音");
     esp_err_t err = chat_client_play_message(pa->msg_id);
     free(pa);
     if (err == ESP_OK) ui_set_voice_status("播放结束");
+    else if (err == ESP_ERR_NOT_FINISHED) ui_set_voice_status("已停止");
     else if (err == ESP_ERR_NOT_FOUND) ui_set_voice_status("历史音频已清理");
     else if (err == ESP_ERR_INVALID_STATE) ui_set_voice_status("音频忙请稍候");
     else ui_set_voice_status("播放失败请重试");
@@ -404,6 +404,7 @@ static void refresh_chat_ui(bool force) {
     int count = chat_client_get_history(items, CHAT_HISTORY_MAX);
     char playing_id[48] = {0};
     chat_client_get_playing_id(playing_id, sizeof(playing_id));
+    chat_play_phase_t play_phase = chat_client_get_play_phase();
 
     lv_obj_clean(s_chat_list);
     if (count == 0) {
@@ -467,11 +468,13 @@ static void refresh_chat_ui(bool force) {
 
         // Voice action line
         char vline[64];
-        if (is_playing) snprintf(vline, sizeof(vline), LV_SYMBOL_STOP "  正在播放 · 点击停止");
-        else if (playable) snprintf(vline, sizeof(vline), LV_SYMBOL_VOLUME_MAX "  %d\" 语音  点击播放", m->duration_sec > 0 ? m->duration_sec : 3);
+        if (is_playing) {
+            snprintf(vline, sizeof(vline), "%s",
+                     play_phase == CHAT_PLAY_DOWNLOADING ? LV_SYMBOL_STOP "  正在下载 · 点击取消" : LV_SYMBOL_STOP "  正在播放 · 点击停止");
+        } else if (playable) snprintf(vline, sizeof(vline), LV_SYMBOL_VOLUME_MAX "  %d\" 语音  点击播放", m->duration_sec > 0 ? m->duration_sec : 3);
         else snprintf(vline, sizeof(vline), LV_SYMBOL_VOLUME_MAX "  %d\" 语音 (音频已清理)", m->duration_sec > 0 ? m->duration_sec : 3);
         lv_obj_t *voice_lbl = make_label(bubble, vline, &pet_font,
-                                         is_playing ? COL_AI_DARK : (playable ? COL_INK : COL_MUTED));
+                                         is_playing ? (play_phase == CHAT_PLAY_DOWNLOADING ? COL_AMBER_INK : COL_AI_DARK) : (playable ? COL_INK : COL_MUTED));
         lv_obj_set_width(voice_lbl, content_w);
 
         if (has_text) {
@@ -520,15 +523,16 @@ static void update_incoming_popup(void) {
         if (s_popup_visible) {
             s_popup_visible = false;
             s_popup_msg_id[0] = 0;
+            s_popup_last_phase = CHAT_PLAY_IDLE;
             lv_obj_set_hidden(s_msg_popup, true);
         }
         return;
     }
 
-    bool playing = chat_client_is_playing();
-    if (!s_popup_visible || strcmp(s_popup_msg_id, msg.id) != 0 || playing != s_popup_was_playing) {
+    chat_play_phase_t phase = chat_client_get_play_phase();
+    if (!s_popup_visible || strcmp(s_popup_msg_id, msg.id) != 0 || phase != s_popup_last_phase) {
         snprintf(s_popup_msg_id, sizeof(s_popup_msg_id), "%s", msg.id);
-        s_popup_was_playing = playing;
+        s_popup_last_phase = phase;
 
         char head[64];
         snprintf(head, sizeof(head), "%s发来新消息", msg.sender[0] ? msg.sender : "家长");
@@ -543,8 +547,12 @@ static void update_incoming_popup(void) {
         }
         lv_label_set_text(s_msg_popup_sub, sub);
 
-        lv_obj_set_style_bg_color(s_msg_play_btn, lv_color_hex(playing ? COL_AI : COL_GREEN), 0);
-        lv_label_set_text(s_msg_play_label, playing ? LV_SYMBOL_STOP "  播放中 · 点击停止" : LV_SYMBOL_PLAY "  点击播放");
+        uint32_t btn_col = phase == CHAT_PLAY_DOWNLOADING ? COL_AMBER :
+                           (phase == CHAT_PLAY_PLAYING ? COL_AI : COL_GREEN);
+        const char *btn_txt = phase == CHAT_PLAY_DOWNLOADING ? LV_SYMBOL_STOP "  下载中 · 点击取消" :
+                              (phase == CHAT_PLAY_PLAYING ? LV_SYMBOL_STOP "  播放中 · 点击停止" : LV_SYMBOL_PLAY "  点击播放");
+        lv_obj_set_style_bg_color(s_msg_play_btn, lv_color_hex(btn_col), 0);
+        lv_label_set_text(s_msg_play_label, btn_txt);
         lv_obj_center(s_msg_play_label);
 
         if (!s_popup_visible) {
@@ -763,7 +771,7 @@ static void update_bot_face(ai_pet_state_t st, unsigned phase) {
 
 static void anim_timer_cb(lv_timer_t *timer) {
     (void)timer;
-    bool popup_playing = s_popup_visible && chat_client_is_playing();
+    bool popup_playing = s_popup_visible && chat_client_get_play_phase() == CHAT_PLAY_PLAYING;
     bool ai_visible = (s_page == PET_PAGE_AI_CHAT);
     if (!s_alarm_active && !s_voice_animating && !popup_playing && !ai_visible) {
         if (s_anim_phase != 0) {

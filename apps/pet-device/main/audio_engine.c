@@ -199,7 +199,7 @@ static void playback_task(void *arg) {
         esp_audio_simple_dec_raw_t raw = { .buffer = (uint8_t *)job->data + offset, .len = n, .eos = offset + n == job->len };
         unsigned stalls = 0;
         while (raw.len) {
-            if (job->generation != atomic_load(&s_stop_generation)) goto done;
+            if (job->generation != atomic_load(&s_stop_generation)) { job->result = ESP_ERR_NOT_FINISHED; goto done; }
             esp_audio_simple_dec_out_t out = { .buffer = pcm, .len = cap };
             int ret = esp_audio_simple_dec_process(dec, &raw, &out);
             if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH && out.needed_size > cap && out.needed_size <= 65536) {
@@ -225,7 +225,8 @@ static void playback_task(void *arg) {
         }
         offset += n;
     }
-    if (decoded && offset == job->len && job->generation == atomic_load(&s_stop_generation)) job->result = ESP_OK;
+    if (job->generation != atomic_load(&s_stop_generation)) job->result = ESP_ERR_NOT_FINISHED;
+    else if (decoded && offset == job->len) job->result = ESP_OK;
     ESP_LOGI(TAG, "Playback encoded=%u decoded=%u result=%s", (unsigned)job->len, (unsigned)decoded, esp_err_to_name(job->result));
 done:
     if (opened) esp_codec_dev_close(s_speaker);
@@ -233,20 +234,30 @@ done:
     free(pcm); if (locked) xSemaphoreGive(s_codec_lock);
     xSemaphoreGive(job->done); vTaskDeleteWithCaps(NULL);
 }
-esp_err_t audio_engine_play_buffer(const uint8_t *data, size_t len) {
+unsigned audio_engine_get_stop_generation(void) { return atomic_load(&s_stop_generation); }
+esp_err_t audio_engine_play_buffer_gen(const uint8_t *data, size_t len, unsigned expected_gen) {
     if (!data || !len || len > 1024 * 1024) return ESP_ERR_INVALID_ARG;
-    play_job_t job = { .data = data, .len = len, .generation = atomic_load(&s_stop_generation), .done = xSemaphoreCreateBinary() };
+    if (expected_gen != atomic_load(&s_stop_generation)) return ESP_ERR_NOT_FINISHED;
+    play_job_t job = { .data = data, .len = len, .generation = expected_gen, .done = xSemaphoreCreateBinary() };
     if (!job.done) return ESP_ERR_NO_MEM;
     if (!spawn(playback_task, "audio_play", &job)) { vSemaphoreDelete(job.done); return ESP_ERR_NO_MEM; }
     xSemaphoreTake(job.done, portMAX_DELAY); vSemaphoreDelete(job.done); return job.result;
 }
-esp_err_t audio_engine_play_file(const char *path) {
+esp_err_t audio_engine_play_buffer(const uint8_t *data, size_t len) {
+    return audio_engine_play_buffer_gen(data, len, audio_engine_get_stop_generation());
+}
+esp_err_t audio_engine_play_file_gen(const char *path, unsigned expected_gen) {
+    if (expected_gen != atomic_load(&s_stop_generation)) return ESP_ERR_NOT_FINISHED;
     FILE *f = fopen(path, "rb"); if (!f) return ESP_ERR_NOT_FOUND;
     fseek(f, 0, SEEK_END); long size = ftell(f); rewind(f);
     if (size <= 0 || size > 1024 * 1024) { fclose(f); return ESP_ERR_INVALID_SIZE; }
     uint8_t *buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     bool ok = buf && fread(buf, 1, size, f) == size; fclose(f);
-    esp_err_t err = ok ? audio_engine_play_buffer(buf, size) : ESP_FAIL; free(buf); return err;
+    if (ok && expected_gen != atomic_load(&s_stop_generation)) { free(buf); return ESP_ERR_NOT_FINISHED; }
+    esp_err_t err = ok ? audio_engine_play_buffer_gen(buf, size, expected_gen) : ESP_FAIL; free(buf); return err;
+}
+esp_err_t audio_engine_play_file(const char *path) {
+    return audio_engine_play_file_gen(path, audio_engine_get_stop_generation());
 }
 void audio_engine_stop_playback(void) { atomic_fetch_add(&s_stop_generation, 1); }
 void audio_engine_set_volume(uint8_t volume) { atomic_store(&s_volume_percent, volume > 100 ? 100 : volume); }

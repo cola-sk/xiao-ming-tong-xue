@@ -70,6 +70,7 @@ static void apply_server_config(const char *resp_json) {
             if (chat_client_fetch_history() == ESP_OK) {
                 s_chat_boot_synced = true;
                 s_last_unread = unread_val;
+                chat_client_prefetch_unread();
             }
         } else {
             s_last_unread = unread_val;

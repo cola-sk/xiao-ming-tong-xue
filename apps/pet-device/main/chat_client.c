@@ -38,6 +38,8 @@ static int s_history_count = 0;
 static SemaphoreHandle_t s_chat_lock = NULL;
 static atomic_uint s_chat_version = 1;
 static atomic_bool s_parent_play_busy;
+static atomic_int s_play_phase = CHAT_PLAY_IDLE;
+static atomic_uint s_active_play_gen = 0;
 static atomic_bool s_upload_busy;
 static char s_playing_id[48] = {0};
 static chat_message_info_t s_pending_msg = {0};
@@ -333,18 +335,10 @@ static esp_err_t chat_http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-static esp_err_t download_and_play_chat_audio(const char *msg_id, const char *audio_url, bool *cached_out) {
-    char path[96];
-    if (!wechat_cache_path(msg_id, path, sizeof(path))) return ESP_ERR_INVALID_ARG;
-    esp_err_t err = audio_download_file(audio_url, path, NULL);
-    if (err != ESP_OK) return err;
-    err = audio_engine_play_file(path);
-    if (err == ESP_OK && cached_out) *cached_out = true;
-    return err;
-}
-
 static esp_err_t post_audio_request(const char *endpoint, cJSON *body) {
     if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
+    bool from_parent_play = atomic_load(&s_parent_play_busy);
+    unsigned expected_gen = from_parent_play ? atomic_load(&s_active_play_gen) : 0;
     char *post = cJSON_PrintUnformatted(body); if (!post) return ESP_ERR_NO_MEM;
     chat_resp_t ctx = { .cap = 512 * 1024 };
     ctx.buf = heap_caps_malloc(ctx.cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -359,6 +353,7 @@ static esp_err_t post_audio_request(const char *endpoint, cJSON *body) {
     for (int attempt = 1; attempt <= 3; attempt++) {
         ctx.len = 0; ctx.overflow = false; ctx.mp3 = false;
         esp_http_client_config_t cfg = { .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 20000,
+            .buffer_size = 4096,
             .crt_bundle_attach = esp_crt_bundle_attach, .disable_auto_redirect = true,
             .addr_type = HTTP_ADDR_TYPE_INET, .keep_alive_enable = false,
             .event_handler = chat_http_event_handler, .user_data = &ctx };
@@ -369,14 +364,17 @@ static esp_err_t post_audio_request(const char *endpoint, cJSON *body) {
         esp_http_client_set_header(c, "Connection", "close");
         size_t length = strlen(post), sent = 0;
         int64_t started = esp_timer_get_time();
-        ui_set_voice_status("正在连接网络");
+        if (!from_parent_play) ui_set_voice_status("正在连接网络");
         err = esp_http_client_open(c, length);
         int64_t connected = esp_timer_get_time();
         // No body has been sent: it is safe to try another DNS address.
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Audio connect failed attempt=%d elapsed=%lld ms err=%s", attempt, (connected - started) / 1000, esp_err_to_name(err));
             pet_http_note_result(c, err); esp_http_client_close(c); esp_http_client_cleanup(c);
-            if (attempt < 3 && wifi_manager_is_connected()) { ui_set_voice_status("连接失败稍后重试"); vTaskDelay(pdMS_TO_TICKS(800)); continue; }
+            if (attempt < 3 && wifi_manager_is_connected()) {
+                if (!from_parent_play) ui_set_voice_status("连接失败稍后重试");
+                vTaskDelay(pdMS_TO_TICKS(800)); continue;
+            }
             break;
         }
         esp_http_client_set_timeout_ms(c, 55000);
@@ -388,30 +386,48 @@ static esp_err_t post_audio_request(const char *endpoint, cJSON *body) {
         }
         int64_t uploaded = esp_timer_get_time();
         if (err == ESP_OK) {
-            ui_set_voice_status("正在思考请稍候");
+            if (!from_parent_play) ui_set_voice_status("正在思考请稍候");
             int64_t response_len = esp_http_client_fetch_headers(c);
             int status = esp_http_client_get_status_code(c); device_pairing_handle_status(status);
             if (response_len < 0 || response_len >= ctx.cap) err = ESP_FAIL;
             char scratch[2048];
             while (err == ESP_OK) {
+                if (from_parent_play && expected_gen != audio_engine_get_stop_generation()) {
+                    err = ESP_ERR_NOT_FINISHED;
+                    break;
+                }
                 int n = esp_http_client_read(c, scratch, sizeof(scratch));
                 if (n < 0) { err = ESP_FAIL; break; }
                 if (n == 0) { if (!esp_http_client_is_complete_data_received(c)) err = ESP_FAIL; break; }
                 if (ctx.overflow) { err = ESP_ERR_INVALID_SIZE; break; }
             }
             ESP_LOGI(TAG, "Audio reply HTTP=%d bytes=%d mp3=%d", status, ctx.len, ctx.mp3);
-            if (status != 200 || !ctx.mp3 || ctx.overflow || !ctx.len) err = ESP_FAIL;
+            if (err == ESP_OK && (status != 200 || !ctx.mp3 || ctx.overflow || !ctx.len)) err = ESP_FAIL;
         }
         ESP_LOGI(TAG, "Audio timing: connect=%lld ms upload=%lld ms reply=%lld ms sent=%u/%u result=%s",
                  (connected - started) / 1000, (uploaded - connected) / 1000, (esp_timer_get_time() - uploaded) / 1000,
                  (unsigned)sent, (unsigned)length, esp_err_to_name(err));
-        pet_http_note_result(c, err); esp_http_client_close(c); esp_http_client_cleanup(c);
+        pet_http_note_result(c, err == ESP_ERR_NOT_FINISHED ? ESP_OK : err); esp_http_client_close(c); esp_http_client_cleanup(c);
         break; // After a possible complete upload, only an explicit user retry repeats AI work.
     }
     if (restore) esp_wifi_set_ps(ps);
     pet_http_net_unlock();
     cJSON_free(post);
-    if (err == ESP_OK) { ui_set_voice_status("正在播放语音"); err = audio_engine_play_buffer((uint8_t *)ctx.buf, ctx.len); }
+    if (err == ESP_OK) {
+        if (from_parent_play) {
+            if (expected_gen != audio_engine_get_stop_generation()) {
+                free(ctx.buf);
+                return ESP_ERR_NOT_FINISHED;
+            }
+            atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
+            atomic_fetch_add(&s_chat_version, 1);
+            ui_set_voice_status("正在播放语音");
+            err = audio_engine_play_buffer_gen((uint8_t *)ctx.buf, ctx.len, expected_gen);
+        } else {
+            ui_set_voice_status("正在播放语音");
+            err = audio_engine_play_buffer((uint8_t *)ctx.buf, ctx.len);
+        }
+    }
     free(ctx.buf); return err;
 }
 
@@ -532,6 +548,7 @@ esp_err_t chat_client_fetch_history(void) {
         .url = url,
         .method = HTTP_METHOD_GET,
         .timeout_ms = 12000,
+        .buffer_size = 2048,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = true,
         .addr_type = HTTP_ADDR_TYPE_INET,
@@ -654,6 +671,10 @@ bool chat_client_is_playing(void) {
     return atomic_load(&s_parent_play_busy);
 }
 
+chat_play_phase_t chat_client_get_play_phase(void) {
+    return (chat_play_phase_t)atomic_load(&s_play_phase);
+}
+
 void chat_client_get_playing_id(char *out_id, size_t out_len) {
     if (!out_id || out_len == 0) return;
     out_id[0] = 0;
@@ -663,11 +684,45 @@ void chat_client_get_playing_id(char *out_id, size_t out_len) {
     xSemaphoreGive(s_chat_lock);
 }
 
+static bool play_cancel_cb(void *ctx) {
+    unsigned expected_gen = *(unsigned *)ctx;
+    return expected_gen != audio_engine_get_stop_generation();
+}
+
+static bool prefetch_cancel_cb(void *ctx) {
+    (void)ctx;
+    return audio_engine_is_busy() || chat_client_is_playing() || chat_client_is_uploading();
+}
+
+static void voice_read_ack_task(void *arg) {
+    char *id = (char *)arg;
+    if (id && *id) {
+        if (device_sync_send_voice_read(id) == ESP_OK && s_chat_lock && s_history) {
+            bool updated = false;
+            xSemaphoreTake(s_chat_lock, portMAX_DELAY);
+            for (int i = 0; i < s_history_count; i++) {
+                if (strcmp(s_history[i].id, id) == 0 && s_history[i].audio_url[0]) {
+                    s_history[i].audio_url[0] = 0;
+                    updated = true;
+                    break;
+                }
+            }
+            xSemaphoreGive(s_chat_lock);
+            if (updated) save_history_file();
+        }
+    }
+    free(id);
+    vTaskDelete(NULL);
+}
+
 esp_err_t chat_client_play_message(const char *msg_id) {
     ensure_chat_init();
     if (!msg_id || !*msg_id || !s_chat_lock) return ESP_ERR_INVALID_ARG;
     bool expected = false;
     if (!atomic_compare_exchange_strong(&s_parent_play_busy, &expected, true)) return ESP_ERR_INVALID_STATE;
+
+    unsigned start_gen = audio_engine_get_stop_generation();
+    atomic_store(&s_active_play_gen, start_gen);
 
     chat_message_info_t target = {0};
     bool found = false;
@@ -687,11 +742,10 @@ esp_err_t chat_client_play_message(const char *msg_id) {
     xSemaphoreGive(s_chat_lock);
 
     if (!found) {
+        atomic_store(&s_play_phase, CHAT_PLAY_IDLE);
         atomic_store(&s_parent_play_busy, false);
         return ESP_ERR_NOT_FOUND;
     }
-
-    atomic_fetch_add(&s_chat_version, 1);
 
     char path[96] = {0};
     bool has_path = wechat_cache_path(target.id, path, sizeof(path));
@@ -700,41 +754,62 @@ esp_err_t chat_client_play_message(const char *msg_id) {
     esp_err_t err = ESP_ERR_NOT_FOUND;
 
     if (local_ok) {
-        err = audio_engine_play_file(path);
+        atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
+        atomic_fetch_add(&s_chat_version, 1);
+        ui_set_voice_status("正在播放语音");
+        err = audio_engine_play_file_gen(path, start_gen);
     } else if (target.audio_url[0]) {
-        err = download_and_play_chat_audio(target.id, target.audio_url, &downloaded_now);
-        if (err != ESP_OK && has_path) unlink(path);
+        atomic_store(&s_play_phase, CHAT_PLAY_DOWNLOADING);
+        atomic_fetch_add(&s_chat_version, 1);
+        ui_set_voice_status("正在下载语音");
+        uint8_t *buf = NULL;
+        size_t buf_len = 0;
+        err = audio_download_to_buffer(target.audio_url, &buf, &buf_len, play_cancel_cb, &start_gen);
+        if (err == ESP_OK && buf && buf_len > 0) {
+            if (start_gen == audio_engine_get_stop_generation()) {
+                atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
+                atomic_fetch_add(&s_chat_version, 1);
+                ui_set_voice_status("正在播放语音");
+                err = audio_engine_play_buffer_gen(buf, buf_len, start_gen);
+            } else {
+                err = ESP_ERR_NOT_FINISHED;
+            }
+            if (save_local_audio_file(target.id, buf, buf_len)) downloaded_now = true;
+            free(buf);
+        } else {
+            free(buf);
+        }
     } else if (!is_placeholder_text(target.text)) {
+        atomic_store(&s_play_phase, CHAT_PLAY_DOWNLOADING);
+        atomic_fetch_add(&s_chat_version, 1);
+        ui_set_voice_status("正在合成语音");
         err = synthesize_and_play_text(target.text);
     }
 
+    if (start_gen != audio_engine_get_stop_generation() && err != ESP_OK) {
+        err = ESP_ERR_NOT_FINISHED;
+    }
+
+    bool mark_read = (err == ESP_OK) && target.from_parent && target.unread;
     bool need_persist = false;
-    if (err == ESP_OK) {
-        bool marked_read = false;
-        if (target.from_parent && target.unread) {
-            if (device_sync_send_voice_read(target.id) == ESP_OK) marked_read = true;
-        }
-        if (downloaded_now || marked_read) {
-            xSemaphoreTake(s_chat_lock, portMAX_DELAY);
-            for (int i = 0; i < s_history_count; i++) {
-                if (strcmp(s_history[i].id, target.id) == 0) {
-                    if (downloaded_now) s_history[i].has_local_audio = true;
-                    if (marked_read) {
-                        s_history[i].unread = false;
-                        s_history[i].audio_url[0] = 0;
-                    }
-                    break;
-                }
+    if (downloaded_now || mark_read) {
+        xSemaphoreTake(s_chat_lock, portMAX_DELAY);
+        for (int i = 0; i < s_history_count; i++) {
+            if (strcmp(s_history[i].id, target.id) == 0) {
+                if (downloaded_now) s_history[i].has_local_audio = true;
+                if (mark_read) s_history[i].unread = false;
+                break;
             }
-            if (marked_read) refresh_pending_from_history_locked();
-            xSemaphoreGive(s_chat_lock);
-            need_persist = true;
         }
+        if (mark_read) refresh_pending_from_history_locked();
+        xSemaphoreGive(s_chat_lock);
+        need_persist = true;
     }
 
     xSemaphoreTake(s_chat_lock, portMAX_DELAY);
     s_playing_id[0] = 0;
     xSemaphoreGive(s_chat_lock);
+    atomic_store(&s_play_phase, CHAT_PLAY_IDLE);
     atomic_store(&s_parent_play_busy, false);
     atomic_fetch_add(&s_chat_version, 1);
 
@@ -742,7 +817,63 @@ esp_err_t chat_client_play_message(const char *msg_id) {
         save_history_file();
         prune_wechat_audio_cache();
     }
+    if (mark_read) {
+        char *ack_id = strdup(target.id);
+        if (!ack_id || xTaskCreate(voice_read_ack_task, "voice_ack", 8192, ack_id, 4, NULL) != pdPASS) {
+            free(ack_id);
+            if (device_sync_send_voice_read(target.id) == ESP_OK && s_chat_lock && s_history) {
+                xSemaphoreTake(s_chat_lock, portMAX_DELAY);
+                for (int i = 0; i < s_history_count; i++) {
+                    if (strcmp(s_history[i].id, target.id) == 0) { s_history[i].audio_url[0] = 0; break; }
+                }
+                xSemaphoreGive(s_chat_lock);
+                save_history_file();
+            }
+        }
+    }
     return err;
+}
+
+void chat_client_prefetch_unread(void) {
+    ensure_chat_init();
+    if (!wifi_manager_is_connected() || !device_pairing_is_paired() || !s_chat_lock || !s_history) return;
+    chat_message_info_t *items = heap_caps_calloc(CHAT_HISTORY_MAX, sizeof(chat_message_info_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!items) return;
+    int count = snapshot_history(items, CHAT_HISTORY_MAX);
+    int fetched = 0;
+    for (int i = count - 1; i >= 0 && fetched < 3; i--) {
+        if (prefetch_cancel_cb(NULL)) break;
+        const chat_message_info_t *m = &items[i];
+        if (!m->from_parent || !m->unread || !m->audio_url[0]) continue;
+        char path[96];
+        if (!wechat_cache_path(m->id, path, sizeof(path))) continue;
+        if (file_exists_nonempty(path)) continue;
+        uint8_t *buf = NULL;
+        size_t len = 0;
+        esp_err_t err = audio_download_to_buffer(m->audio_url, &buf, &len, prefetch_cancel_cb, NULL);
+        if (err == ESP_OK && buf && len > 0) {
+            bool saved = save_local_audio_file(m->id, buf, len);
+            free(buf);
+            if (saved) {
+                xSemaphoreTake(s_chat_lock, portMAX_DELAY);
+                for (int j = 0; j < s_history_count; j++) {
+                    if (strcmp(s_history[j].id, m->id) == 0) {
+                        s_history[j].has_local_audio = true;
+                        break;
+                    }
+                }
+                xSemaphoreGive(s_chat_lock);
+                atomic_fetch_add(&s_chat_version, 1);
+                save_history_file();
+                prune_wechat_audio_cache();
+                fetched++;
+            }
+        } else {
+            free(buf);
+            if (err == ESP_ERR_NOT_FINISHED) break;
+        }
+    }
+    free(items);
 }
 
 esp_err_t chat_client_play_next_unread(void) {
@@ -830,6 +961,8 @@ static esp_err_t send_child_recording(const char *message_id, const uint8_t *aud
             .url = url,
             .method = HTTP_METHOD_POST,
             .timeout_ms = 20000,
+            .buffer_size = 2048,
+            .buffer_size_tx = 4096,
             .crt_bundle_attach = esp_crt_bundle_attach,
             .disable_auto_redirect = true,
             .addr_type = HTTP_ADDR_TYPE_INET,

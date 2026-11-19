@@ -31,15 +31,23 @@ typedef struct {
     chat_send_state_t send_state;
 } chat_message_info_t;
 
+typedef enum {
+    CHAT_PLAY_IDLE        = 0,
+    CHAT_PLAY_DOWNLOADING = 1,
+    CHAT_PLAY_PLAYING     = 2,
+} chat_play_phase_t;
+
 void chat_client_init(void);
 esp_err_t chat_client_fetch_history(void);
 bool chat_client_get_unread_info(chat_message_info_t *out, int *out_unread_count);
 int chat_client_get_history(chat_message_info_t *out, int max_items);
 uint32_t chat_client_get_version(void);
 bool chat_client_is_playing(void);
+chat_play_phase_t chat_client_get_play_phase(void);
 bool chat_client_is_uploading(void);
 void chat_client_get_playing_id(char *out_id, size_t out_len);
 esp_err_t chat_client_play_message(const char *msg_id);
+void chat_client_prefetch_unread(void);
 void chat_client_add_local_outgoing(const char *msg_id, const uint8_t *audio, size_t audio_len,
                                     const char *mime, int duration_sec);
 void chat_client_set_send_state(const char *msg_id, chat_send_state_t state);
