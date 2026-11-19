@@ -21,12 +21,11 @@ export async function GET(
         (s.audioUrl || '').toLowerCase().includes(cleanMd5)
     );
     if (!matched) {
-      console.warn('[audio/md5] 404 schedule mismatch', {
+      console.warn('[audio/md5] schedule mismatch (allowing authenticated device)', {
         deviceId: access.deviceId,
         cleanMd5,
         schedules: schedules.map(s => ({ id: s.id, deviceId: s.deviceId, audioMd5: s.audioMd5 })),
       });
-      return NextResponse.json({ error: '音频不存在' }, { status: 404 });
     }
   }
   const audio = await getAudioByMd5(cleanMd5);
