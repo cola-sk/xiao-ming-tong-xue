@@ -110,7 +110,12 @@ esp_err_t audio_download_to_buffer(const char *url, uint8_t **out_buf, size_t *o
         if (cancel_fn && cancel_fn(cancel_ctx)) {
             err = ESP_ERR_NOT_FINISHED;
         } else if (len < 0 || len > AUDIO_MAX_BYTES || status != 200 || (len == 0 && !chunked)) {
-            ESP_LOGW("audio_dl", "HTTP fail status=%d len=%lld chunked=%d url=%s", status, (long long)len, chunked, full);
+            char err_body[160] = {0};
+            if (status != 200) {
+                int r = esp_http_client_read(c, err_body, sizeof(err_body) - 1);
+                if (r > 0) err_body[r] = 0;
+            }
+            ESP_LOGW("audio_dl", "HTTP fail status=%d len=%lld chunked=%d url=%s body=%s", status, (long long)len, chunked, full, err_body);
             err = ESP_FAIL;
         } else {
             cap = len > 0 ? (size_t)len : 32768;
