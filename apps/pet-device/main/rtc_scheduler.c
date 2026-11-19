@@ -244,7 +244,7 @@ static void rtc_monitor_task(void *arg) {
                     }
                 }
                 bool acked = atomic_exchange(&s_alarm_ack, false);
-                if (acked) save_ack(s_active.id);
+                if (acked || (played && s->repeat_mask == 0)) save_ack(s_active.id);
                 if (played || acked) {
                     mark_fired(s, stamp);
                     if (s->repeat_mask == 0) {

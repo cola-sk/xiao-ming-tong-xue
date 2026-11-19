@@ -9,7 +9,7 @@ let schemaReadyPromise: Promise<void> | null = null;
 export function getNeonSql(): NeonQueryFunction<false, false> | null {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
   if (!url) return null;
-  return neon(url);
+  return neon(url, { fetchOptions: { cache: 'no-store' } });
 }
 
 /**
