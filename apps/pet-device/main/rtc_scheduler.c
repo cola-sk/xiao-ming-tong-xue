@@ -240,8 +240,8 @@ static void rtc_monitor_task(void *arg) {
                     esp_err_t err = audio_engine_play_file(path);
                     if (err != ESP_OK) break;
                     played = true;
-                    if (!atomic_load(&s_alarm_ack) && n + 1 < s->repeat_play_count) {
-                        vTaskDelay(pdMS_TO_TICKS(300));
+                    for (int w = 0; w < 10 && !atomic_load(&s_alarm_ack) && n + 1 < s->repeat_play_count; w++) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
                     }
                 }
                 if (played || atomic_load(&s_alarm_ack)) {
