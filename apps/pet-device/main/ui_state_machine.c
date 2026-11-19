@@ -66,7 +66,7 @@ static lv_obj_t *make_button(lv_obj_t *parent, const char *text, lv_event_cb_t c
 }
 void ui_state_init(void) {
     if (!bsp_display_start()) { ESP_LOGE(TAG, "Display initialization failed"); return; }
-    bsp_display_lock(-1);
+    if (esp_lv_adapter_lock(-1) != ESP_OK) return;
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x17283b), 0);
     lv_obj_set_style_text_font(screen, &pet_font, 0);
@@ -104,8 +104,8 @@ void ui_state_init(void) {
     lv_obj_set_style_text_align(s_pairing_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(s_pairing_status, "联网后获取绑定码\n家长端家庭设备中输入\n绑定码10分钟内有效");
     lv_obj_align(s_pairing_status, LV_ALIGN_BOTTOM_MID, 0, -10);
-    if (device_pairing_is_paired()) lv_obj_add_flag(s_pairing_panel, LV_OBJ_FLAG_HIDDEN);
-    bsp_display_unlock();
+    if (device_pairing_is_paired()) lv_obj_set_hidden(s_pairing_panel, true);
+    esp_lv_adapter_unlock();
     xTaskCreate(touch_poll_task, "touch_poll", 2048, bsp_display_get_input_dev(), 4, NULL);
     ESP_LOGI(TAG, "Pet interface initialized");
 }
@@ -123,9 +123,9 @@ void ui_set_voice_status(const char *status) {
 }
 void ui_set_pairing_status(const char *code, const char *status) {
     if (!s_pairing_panel || esp_lv_adapter_lock(1000) != ESP_OK) return;
-    if (device_pairing_is_paired()) lv_obj_add_flag(s_pairing_panel, LV_OBJ_FLAG_HIDDEN);
+    if (device_pairing_is_paired()) lv_obj_set_hidden(s_pairing_panel, true);
     else {
-        lv_obj_remove_flag(s_pairing_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_pairing_panel, false);
         if (code) { lv_label_set_text(s_pairing_code, code); lv_obj_center(s_pairing_code); }
         lv_label_set_text(s_pairing_status, status);
     }
