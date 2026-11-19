@@ -1082,7 +1082,7 @@ static void build_home_view(lv_obj_t *screen) {
     lv_obj_set_style_border_color(s_btn_ai, lv_color_hex(0x93C5FD), 0);
     lv_obj_set_style_border_opa(s_btn_ai, LV_OPA_60, 0);
     lv_obj_align(s_btn_ai, LV_ALIGN_BOTTOM_LEFT, 16, -18);
-    lv_obj_t *ai_t = make_label(s_btn_ai, LV_SYMBOL_AUDIO " AI 聊天", &s_btn_font, 0xFFFFFF);
+    lv_obj_t *ai_t = make_label(s_btn_ai, SYMBOL_BOT " AI 聊天", &s_btn_font, 0xFFFFFF);
     lv_obj_set_style_text_opa(ai_t, LV_OPA_80, 0);
     lv_obj_set_style_text_letter_space(ai_t, 2, 0);
     lv_obj_align(ai_t, LV_ALIGN_CENTER, 0, 0);
