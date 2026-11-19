@@ -456,7 +456,10 @@ export async function ackVoiceSchedule(id: string, deviceId?: string): Promise<v
     await ensureNeonSchema();
     await sql`
       UPDATE voice_schedules
-      SET last_ack_status = 'confirmed', last_ack_at = NOW(), updated_at = NOW()
+      SET last_ack_status = 'confirmed',
+          last_ack_at = NOW(),
+          enabled = CASE WHEN jsonb_array_length(repeat_days) = 0 THEN FALSE ELSE enabled END,
+          updated_at = NOW()
       WHERE id = ${id} AND (${deviceId || null}::text IS NULL OR device_id = ${deviceId || null})
     `;
     return;
@@ -465,6 +468,7 @@ export async function ackVoiceSchedule(id: string, deviceId?: string): Promise<v
   if (existing && (!deviceId || existing.deviceId === deviceId)) {
     memSchedules.set(id, {
       ...existing,
+      enabled: existing.repeatDays.length === 0 ? false : existing.enabled,
       lastAckStatus: 'confirmed',
       lastAckAt: new Date().toISOString(),
     });

@@ -56,7 +56,15 @@ export async function POST(request: NextRequest) {
       title,
       cronExpr: String(body.cronExpr || '30 7 * * 1,2,3,4,5'),
       timeStr,
-      repeatDays: Array.isArray(body.repeatDays) ? body.repeatDays.map(Number) : [1, 2, 3, 4, 5],
+      repeatDays: Array.isArray(body.repeatDays)
+        ? Array.from(
+            new Set<number>(
+              (body.repeatDays as unknown[])
+                .map(Number)
+                .filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 7)
+            )
+          ).sort((a, b) => a - b)
+        : [1, 2, 3, 4, 5],
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : true,
       sourceType:
         body.sourceType === 'parent_clone'

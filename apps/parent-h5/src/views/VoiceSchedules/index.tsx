@@ -63,9 +63,10 @@ export const VoiceSchedulesPage: React.FC = () => {
   };
 
   const renderRepeatDays = (days: number[]) => {
-    if (!days || days.length === 0) return '单次提醒';
+    if (!days || days.length === 0) return '仅一次（不循环）';
     if (days.length === 7) return '每天';
     if (days.length === 5 && [1, 2, 3, 4, 5].every(d => days.includes(d))) return '周一至周五';
+    if (days.length === 2 && [6, 7].every(d => days.includes(d))) return '周末';
     const dayMap: Record<number, string> = {
       1: '一',
       2: '二',

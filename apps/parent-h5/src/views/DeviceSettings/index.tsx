@@ -210,10 +210,10 @@ export const DeviceSettingsPage: React.FC = () => {
         <div className="pt-3 border-t border-[#F0EFEA] flex items-center justify-between gap-3">
           <div>
             <div className="text-caption text-[#1F2937] font-bold">
-              设备收到语音后直接外放播报
+              亲子微聊语音直接外放
             </div>
-            <p className="text-[11px] text-[#6B7280] mt-0.5">
-              关闭时仅响“叮咚”提示音并显示红点，等孩子点击屏幕再播
+            <p className="text-[11px] text-[#6B7280] mt-0.5 leading-relaxed">
+              仅对家长发送的微聊语音生效（不影响 AI 对话和定时提醒）。开启后设备收到即直接播报；关闭时仅响提示音并亮红点，需孩子点击播放。
             </p>
           </div>
           <Switch
@@ -222,8 +222,8 @@ export const DeviceSettingsPage: React.FC = () => {
               setAutoPlayOnDevice(checked);
               Toast.show({
                 content: checked
-                  ? '已开启：设备收到语音后直接外放'
-                  : '已关闭：仅响“叮咚”提示音并显示红点',
+                  ? '已开启：家长微聊语音收到后直接外放'
+                  : '已关闭：家长微聊语音需孩子点击收听',
               });
             }}
             style={{
