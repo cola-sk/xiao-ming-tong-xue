@@ -110,6 +110,7 @@ esp_err_t audio_download_to_buffer(const char *url, uint8_t **out_buf, size_t *o
         if (cancel_fn && cancel_fn(cancel_ctx)) {
             err = ESP_ERR_NOT_FINISHED;
         } else if (len < 0 || len > AUDIO_MAX_BYTES || status != 200 || (len == 0 && !chunked)) {
+            ESP_LOGW("audio_dl", "HTTP fail status=%d len=%lld chunked=%d url=%s", status, (long long)len, chunked, full);
             err = ESP_FAIL;
         } else {
             cap = len > 0 ? (size_t)len : 32768;
@@ -204,6 +205,7 @@ esp_err_t audio_download_file(const char *url, const char *path, const char *md5
         char hex[33];
         md5_hex_buf(buf, len, hex);
         if (strcasecmp(hex, md5) != 0) {
+            ESP_LOGW("audio_dl", "MD5 mismatch got=%s expected=%s len=%u", hex, md5, (unsigned)len);
             free(buf);
             return ESP_FAIL;
         }

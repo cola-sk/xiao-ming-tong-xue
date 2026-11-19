@@ -140,40 +140,35 @@ export async function saveSynthesizedAudio(params: {
   // 1) 优先持久化到 Neon PostgreSQL
   const sql = getNeonSql();
   if (sql) {
-    try {
-      await ensureNeonSchema();
-      await sql`
-        INSERT INTO tts_audio_files (
-          md5, voice_type, text_content, mime_type, audio_base64, size_bytes
-        ) VALUES (
-          ${record.md5}, ${record.voiceType}, ${record.textContent},
-          ${record.mimeType}, ${record.audioBase64}, ${record.sizeBytes}
-        )
-        ON CONFLICT (md5) DO UPDATE SET
-          audio_base64 = EXCLUDED.audio_base64,
-          size_bytes = EXCLUDED.size_bytes
-      `;
-    } catch {
-      // Ignore DB write error
-    }
+    await ensureNeonSchema();
+    await sql`
+      INSERT INTO tts_audio_files (
+        md5, voice_type, text_content, mime_type, audio_base64, size_bytes
+      ) VALUES (
+        ${record.md5}, ${record.voiceType}, ${record.textContent},
+        ${record.mimeType}, ${record.audioBase64}, ${record.sizeBytes}
+      )
+      ON CONFLICT (md5) DO UPDATE SET
+        audio_base64 = EXCLUDED.audio_base64,
+        size_bytes = EXCLUDED.size_bytes
+    `;
   } else {
     // 2) 回退兼容 Supabase
     const db = getSupabaseAdmin();
     if (db) {
-      try {
-        await db.from('tts_audio_files').upsert(
-          {
-            md5: record.md5,
-            voice_type: record.voiceType,
-            text_content: record.textContent,
-            mime_type: record.mimeType,
-            audio_base64: record.audioBase64,
-            size_bytes: record.sizeBytes,
-          },
-          { onConflict: 'md5' }
-        );
-      } catch {
-        // Gracefully continue
+      const { error } = await db.from('tts_audio_files').upsert(
+        {
+          md5: record.md5,
+          voice_type: record.voiceType,
+          text_content: record.textContent,
+          mime_type: record.mimeType,
+          audio_base64: record.audioBase64,
+          size_bytes: record.sizeBytes,
+        },
+        { onConflict: 'md5' }
+      );
+      if (error) {
+        throw new Error(`持久化定时音频失败: ${error.message}`);
       }
     }
   }
