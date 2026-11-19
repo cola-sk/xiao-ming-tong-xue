@@ -18,6 +18,8 @@ export const DeviceSettingsPage: React.FC = () => {
     updatePetConfig,
     autoPlayOnDevice,
     setAutoPlayOnDevice,
+    parentRole,
+    setParentRole,
   } = useAppStore();
 
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -186,7 +188,41 @@ export const DeviceSettingsPage: React.FC = () => {
         )}
       </section>
 
-      {/* 2. 设备喇叭音量与微聊播报方式设置 */}
+      {/* 2. 家长身份设置（仅在当前设备本地保存） */}
+      <section className="kid-card space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-h3 text-[#1F2937]">设置身份</h3>
+            <p className="text-xs text-[#6B7280]">
+              选择您在家庭微聊中的身份称呼，仅在当前手机本地保存
+            </p>
+          </div>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-[#F7EBE5] text-[#B96043]">
+            {parentRole ? `当前：${parentRole}` : '未设置'}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          {(['妈妈', '爸爸'] as const).map(role => (
+            <button
+              key={role}
+              type="button"
+              onClick={() => {
+                setParentRole(role);
+                Toast.show({ content: `身份已更新为「${role}」` });
+              }}
+              className={`kid-btn !h-9 justify-center text-xs font-bold rounded-xl transition-all ${
+                parentRole === role
+                  ? 'kid-btn-primary'
+                  : 'kid-btn-ghost !border-[#E8E6DF] !text-[#55574F]'
+              }`}
+            >
+              {role === '妈妈' ? '👩 我是妈妈' : '👨 我是爸爸'}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* 3. 设备喇叭音量与微聊播报方式设置 */}
       <section className="kid-card space-y-3">
         <div className="flex items-center justify-between">
           <div>

@@ -66,6 +66,8 @@ interface AppState {
   aiLogs: AiChatLog[];
   autoPlayOnDevice: boolean;
   setAutoPlayOnDevice: (enabled: boolean) => void;
+  parentRole: string;
+  setParentRole: (role: string) => void;
 
   // Actions - 爸妈声音克隆
   addVoiceCloneProfile: (payload: {
@@ -126,6 +128,15 @@ export const useAppStore = create<AppState>()(
       aiLogs: INITIAL_AI_LOGS,
       autoPlayOnDevice: false,
       setAutoPlayOnDevice: enabled => set({ autoPlayOnDevice: enabled }),
+      parentRole: '',
+      setParentRole: role => {
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('parent_user_role', role);
+          } catch {}
+        }
+        set({ parentRole: role });
+      },
 
       addVoiceCloneProfile: ({ id, speakerRole, title, sampleText, sampleAudioUrl, providerVoiceId, status }) => {
         const state = get();
@@ -574,6 +585,7 @@ export const useAppStore = create<AppState>()(
         children: s.children,
         devices: s.devices,
         selectedDeviceId: s.selectedDeviceId,
+        parentRole: s.parentRole,
         // 亲子微聊消息持久化时剔除临时音频 Blob/Base64，只保留文字与状态，不保存聊天音频文件
         messages: s.messages.map(m => ({ ...m, audioUrl: '' })),
         schedules: s.schedules,

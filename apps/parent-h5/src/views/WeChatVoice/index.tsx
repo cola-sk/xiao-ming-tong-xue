@@ -31,6 +31,7 @@ export const WeChatVoicePage: React.FC = () => {
     selectedDeviceId,
     petConfig,
     autoPlayOnDevice,
+    parentRole,
     sendParentVoiceMessage,
     markMessagePlayed,
     syncDevicesFromServer,
@@ -100,7 +101,7 @@ export const WeChatVoicePage: React.FC = () => {
   const isRecording = recordState === 'recording';
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [textInput, setTextInput] = useState('');
-  const [senderRole, setSenderRole] = useState<'妈妈' | '爸爸'>('妈妈');
+  const currentRole = parentRole || (typeof window !== 'undefined' ? localStorage.getItem('parent_user_role') : '') || '妈妈';
   const [localCacheStats, setLocalCacheStats] = useState<{ count: number; totalBytes: number }>({
     count: 0,
     totalBytes: 0,
@@ -291,7 +292,7 @@ export const WeChatVoicePage: React.FC = () => {
       url = recording.url;
       const duration = Math.max(1, Math.ceil(durationMs / 1000));
       await sendParentVoiceMessage({
-        senderName: senderRole,
+        senderName: currentRole,
         asrText: textInput.trim() || `（${duration}秒原声语音）`,
         durationSec: duration,
         autoPlay: autoPlayOnDevice,
@@ -323,7 +324,7 @@ export const WeChatVoicePage: React.FC = () => {
     const duration = Math.max(2, Math.min(15, Math.ceil(textInput.trim().length / 4)));
     try {
     await sendParentVoiceMessage({
-      senderName: senderRole,
+      senderName: currentRole,
       asrText: textInput.trim(),
       durationSec: duration,
       autoPlay: autoPlayOnDevice,
@@ -341,7 +342,7 @@ export const WeChatVoicePage: React.FC = () => {
   };
 
   return (
-    <div className="px-3.5 pt-3 pb-28 space-y-3.5 text-[#1F2937]">
+    <div className="px-3.5 pt-3 pb-[calc(88px+env(safe-area-inset-bottom,0px))] space-y-3 text-[#1F2937]">
       {/* 顶部设备在线与电量卡片 */}
       <div className="family-overview-card">
         <div className="flex items-center justify-between gap-2">
@@ -421,19 +422,23 @@ export const WeChatVoicePage: React.FC = () => {
       {activeSubTab === 'chat' ? (
         <>
       {/* 微信式语音气泡流 */}
-      <section className="space-y-2.5">
-        <div className="flex items-center justify-between px-0.5 gap-2">
-          <div className="flex items-center gap-2">
-            <h3 className="approval-section-title">亲子聊</h3>
-            {(visibleMessages.length > 0 || localCacheStats.count > 0) && <button type="button" onClick={clearLocalHistory} className="text-[10px] text-[#B96043] underline">清空本机记录</button>}
-          </div>
-          <div className="flex items-center gap-2 text-[10px] text-[#929187]">
-            <span>
-              本地语音缓存 {localCacheStats.count} 条 (
-              {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
-            </span>
-
-          </div>
+      <section className="space-y-2">
+        <div className="flex items-center justify-between px-1 text-[10px] text-[#929187]">
+          {(visibleMessages.length > 0 || localCacheStats.count > 0) ? (
+            <button
+              type="button"
+              onClick={clearLocalHistory}
+              className="text-[#B96043] underline"
+            >
+              清空本机记录
+            </button>
+          ) : (
+            <span />
+          )}
+          <span>
+            本地语音缓存 {localCacheStats.count} 条 (
+            {(localCacheStats.totalBytes / 1024).toFixed(0)} KB)
+          </span>
         </div>
 
         {/* 双向聊天消息固定高度滚动区：支持向上滚动查看历史消息 */}
@@ -441,7 +446,7 @@ export const WeChatVoicePage: React.FC = () => {
           <div
             ref={chatListRef}
             onScroll={handleChatScroll}
-            className="h-[390px] sm:h-[430px] overflow-y-auto p-3 rounded-2xl bg-[#F6F5F1] border border-[#E7E5DE] space-y-3 overscroll-contain shadow-inner"
+            className="h-[340px] sm:h-[400px] overflow-y-auto p-3 rounded-2xl bg-[#F6F5F1] border border-[#E7E5DE] space-y-3 overscroll-contain shadow-inner"
           >
             {visibleMessages.length === 0 ? (
               <div className="h-full min-h-[220px] flex items-center justify-center text-center p-6 text-xs text-[#8B8A80]">
@@ -548,32 +553,27 @@ export const WeChatVoicePage: React.FC = () => {
       </section>
 
       {/* 底部录音与快捷语音发送操作台 */}
-      <section className="kid-card space-y-2.5 sticky bottom-[64px] z-30 shadow-md">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-caption text-[#6B7280]">发送身份：</span>
-            {(['妈妈', '爸爸'] as const).map(role => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => setSenderRole(role)}
-                className={`kid-filter-chip !h-6 !min-h-[24px] !px-2.5 !text-[11px] ${
-                  senderRole === role ? 'kid-filter-chip-selected' : ''
-                }`}
-              >
-                {role}
-              </button>
-            ))}
-          </div>
-          <span className="text-[11px] text-[#8B8A80]" aria-live="polite">
-            {isRecording ? `正在录音 ${recordSeconds}s` : recordState === 'starting' ? '正在开启麦克风…' : recordState === 'sending' ? '正在发送…' : '支持录音或输入文字转语音'}
-          </span>
-        </div>
-
+      <section className="kid-card !p-2 sticky bottom-[calc(62px+env(safe-area-inset-bottom,0px))] z-30 shadow-md bg-white/98 backdrop-blur-sm border border-[#E8E6DF]">
         {isRecording ? (
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => void finishRecord(false)} className="kid-btn kid-btn-ghost kid-btn-md flex-1">取消录音</button>
-            <button type="button" onClick={() => void finishRecord(true)} className="kid-btn kid-btn-primary kid-btn-md flex-1">结束并发送</button>
+            <div className="flex items-center gap-1.5 px-2 text-[#B96043] font-bold text-xs shrink-0 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-[#B96043]" />
+              <span>录音中 {recordSeconds}s</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void finishRecord(false)}
+              className="kid-btn kid-btn-ghost !h-10 flex-1 justify-center text-xs"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void finishRecord(true)}
+              className="kid-btn kid-btn-primary !h-10 flex-1 justify-center text-xs"
+            >
+              结束并发送
+            </button>
           </div>
         ) : (
           <form onSubmit={handleQuickTextVoiceSend} className="flex items-center gap-2">
@@ -581,17 +581,34 @@ export const WeChatVoicePage: React.FC = () => {
               type="text"
               value={textInput}
               onChange={e => setTextInput(e.target.value)}
-              placeholder="输入内容或点击录音"
-              className="kid-input flex-1 min-w-0"
+              placeholder={`以「${currentRole}」身份发语音…`}
+              className="kid-input flex-1 min-w-0 !h-10 !text-xs"
               maxLength={120}
               disabled={recordState !== 'idle'}
             />
             {textInput.trim() ? (
-              <button type="submit" disabled={recordState !== 'idle'} className="kid-btn kid-btn-primary kid-btn-md shrink-0">发送语音</button>
+              <button
+                type="submit"
+                disabled={recordState !== 'idle'}
+                className="kid-btn kid-btn-primary !h-10 !px-4 shrink-0 font-bold text-xs"
+              >
+                发送语音
+              </button>
             ) : (
-              <button type="button" disabled={recordState !== 'idle'} onClick={() => void startRecord()} className="kid-btn kid-btn-primary kid-btn-md shrink-0">
+              <button
+                type="button"
+                disabled={recordState !== 'idle'}
+                onClick={() => void startRecord()}
+                className="kid-btn kid-btn-primary !h-10 !px-3.5 shrink-0 flex items-center gap-1.5 font-bold text-xs"
+              >
                 <IconMic className="w-4 h-4" />
-                <span>{recordState === 'starting' ? '开启中…' : recordState === 'sending' ? '发送中…' : '点击录音'}</span>
+                <span>
+                  {recordState === 'starting'
+                    ? '开启中…'
+                    : recordState === 'sending'
+                    ? '发送中…'
+                    : '点击录音'}
+                </span>
               </button>
             )}
           </form>
@@ -600,9 +617,8 @@ export const WeChatVoicePage: React.FC = () => {
         </>
       ) : (
         <section className="space-y-2.5">
-          <div className="flex items-center justify-between px-0.5">
-            <h3 className="approval-section-title">AI聊天记录</h3>
-            <span className="text-[11px] text-[#929187]">共 {aiLogs.length} 轮问答</span>
+          <div className="flex items-center justify-end px-1 text-[11px] text-[#929187]">
+            <span>共 {aiLogs.length} 轮问答</span>
           </div>
 
           <div className="space-y-2.5">
