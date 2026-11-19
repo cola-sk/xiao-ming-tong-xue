@@ -304,7 +304,31 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
             <div>
               <div className="text-caption text-[#1F2937] mb-1.5">
-                重复周期（不选代表仅单次响铃）：
+                重复周期：
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {[
+                  { label: '仅一次（不循环）', days: [] as number[] },
+                  { label: '每天', days: [1, 2, 3, 4, 5, 6, 7] },
+                  { label: '工作日', days: [1, 2, 3, 4, 5] },
+                  { label: '周末', days: [6, 7] },
+                ].map(preset => {
+                  const isActive =
+                    repeatDays.length === preset.days.length &&
+                    preset.days.every(d => repeatDays.includes(d));
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setRepeatDays(preset.days)}
+                      className={`kid-filter-chip !px-2.5 !text-[11px] ${
+                        isActive ? 'kid-filter-chip-selected' : ''
+                      }`}
+                    >
+                      <span>{preset.label}</span>
+                    </button>
+                  );
+                })}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {WEEKDAY_OPTIONS.map(day => {
@@ -323,6 +347,11 @@ export const ScheduleFormModal: React.FC<Props> = ({
                   );
                 })}
               </div>
+              {repeatDays.length === 0 && (
+                <p className="text-[11px] text-[#6B7280] mt-1.5">
+                  仅在下次到达 <span className="font-mono font-bold text-[#1F2937]">{timeStr}</span> 时播报一次，播报后不再循环。
+                </p>
+              )}
             </div>
           </div>
           )}
