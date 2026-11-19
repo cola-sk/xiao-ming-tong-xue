@@ -222,15 +222,15 @@ static void refresh_schedules_ui(bool force) {
     bool clock_valid = false;
     int count = rtc_scheduler_get_today_schedules(items, MAX_SCHEDULES, &clock_valid);
 
-    // Find next pending/ringing item
+    // Find next pending/ringing item (items are sorted by time ascending)
     int next_idx = -1;
     for (int i = 0; i < count; i++) {
         if (items[i].status == SCHEDULE_STATUS_RINGING) { next_idx = i; break; }
         if (items[i].status == SCHEDULE_STATUS_PENDING) {
             int im = (int)items[i].hour * 60 + items[i].minute;
-            if (next_idx < 0 || (cur_min >= 0 && im >= cur_min &&
-                ((int)items[next_idx].hour * 60 + items[next_idx].minute < cur_min))) {
+            if (cur_min < 0 || im >= cur_min) {
                 next_idx = i;
+                break;
             }
         }
     }
@@ -274,8 +274,10 @@ static void refresh_schedules_ui(bool force) {
 
     for (int i = 0; i < count; i++) {
         const pet_today_schedule_t *it = &items[i];
+        int im = (int)it->hour * 60 + it->minute;
         bool is_ringing = it->status == SCHEDULE_STATUS_RINGING;
         bool is_done = it->status == SCHEDULE_STATUS_DONE;
+        bool is_past = !is_ringing && !is_done && cur_min >= 0 && im < cur_min;
         bool is_next = (i == next_idx);
         uint32_t bg = is_ringing ? COL_ALARM_BG : (is_next ? 0xFFFBEB : COL_CARD);
         uint32_t bd = is_ringing ? COL_ALARM : (is_next ? COL_AMBER : 0xEDE5CF);
@@ -285,18 +287,18 @@ static void refresh_schedules_ui(bool force) {
         char tbuf[8];
         snprintf(tbuf, sizeof(tbuf), "%02u:%02u", it->hour, it->minute);
         lv_obj_t *time_lbl = make_label(row, tbuf, &lv_font_montserrat_24,
-                                        is_ringing ? COL_ALARM : (is_done ? 0x94A3B8 : COL_INK));
+                                        is_ringing ? COL_ALARM : ((is_done || is_past) ? 0x94A3B8 : COL_INK));
         lv_obj_align(time_lbl, LV_ALIGN_LEFT_MID, 16, 0);
 
         lv_obj_t *title_lbl = make_label(row, it->title[0] ? it->title : "定时语音", &pet_font,
-                                         is_done ? COL_MUTED : COL_INK);
+                                         (is_done || is_past) ? COL_MUTED : COL_INK);
         lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_MODE_DOTS);
         lv_obj_set_width(title_lbl, 224);
         lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 102, 0);
 
-        const char *st_text = is_ringing ? "播报中" : (is_done ? "已播" : (is_next ? "下一条" : "待播"));
-        uint32_t st_bg = is_ringing ? COL_ALARM : (is_done ? 0xE2E8F0 : (is_next ? 0xFEF3C7 : COL_GREEN_TINT));
-        uint32_t st_fg = is_ringing ? 0xFFFFFF : (is_done ? 0x64748B : (is_next ? 0xB45309 : COL_GREEN_DARK));
+        const char *st_text = is_ringing ? "播报中" : (is_done ? "已播" : (is_past ? "已过" : (is_next ? "下一条" : "待播")));
+        uint32_t st_bg = is_ringing ? COL_ALARM : ((is_done || is_past) ? 0xE2E8F0 : (is_next ? 0xFEF3C7 : COL_GREEN_TINT));
+        uint32_t st_fg = is_ringing ? 0xFFFFFF : ((is_done || is_past) ? 0x64748B : (is_next ? 0xB45309 : COL_GREEN_DARK));
 
         lv_obj_t *pill = make_panel(row, 82, 34, 17, st_bg, st_bg, 0);
         lv_obj_align(pill, LV_ALIGN_RIGHT_MID, -12, 0);

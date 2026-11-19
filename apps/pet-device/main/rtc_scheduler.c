@@ -93,6 +93,16 @@ static bool cache_path(const pet_schedule_t *s, char path[96]) {
     snprintf(path, 96, PET_STORAGE_BASE "/alarms/%s.mp3", s->audio_md5); return true;
 }
 static const char *str(cJSON *obj, const char *name) { cJSON *v = cJSON_GetObjectItem(obj, name); return cJSON_IsString(v) ? v->valuestring : ""; }
+static bool schedule_needs_audio(const pet_schedule_t *s) {
+    return s->enabled && !(s->repeat_mask == 0 && last_fired(s) != 0);
+}
+static bool audio_md5_in_use(const pet_schedule_t *items, int count, const char *md5, const char *exclude_id) {
+    for (int i = 0; i < count; i++) {
+        if (exclude_id && !strcmp(items[i].id, exclude_id)) continue;
+        if (schedule_needs_audio(&items[i]) && !strncasecmp(md5, items[i].audio_md5, 32)) return true;
+    }
+    return false;
+}
 static void prune_audio_cache(const pet_schedule_t *items, int count) {
     DIR *dir = opendir(PET_STORAGE_BASE); if (!dir) return;
     struct dirent *entry;
@@ -100,9 +110,9 @@ static void prune_audio_cache(const pet_schedule_t *items, int count) {
         const char *name = entry->d_name;
         if (*name == '/') name++;
         if (strncmp(name, "alarms/", 7) || strlen(name) != 43 || strcmp(name + 39, ".mp3")) continue;
-        bool keep = false;
-        for (int i = 0; i < count; i++) if (!strncasecmp(name + 7, items[i].audio_md5, 32)) { keep = true; break; }
-        if (!keep) { char path[128]; snprintf(path, sizeof(path), "%s/%.100s", PET_STORAGE_BASE, name); unlink(path); }
+        if (!audio_md5_in_use(items, count, name + 7, NULL)) {
+            char path[128]; snprintf(path, sizeof(path), "%s/%.100s", PET_STORAGE_BASE, name); unlink(path);
+        }
     }
     closedir(dir);
 }
@@ -125,11 +135,20 @@ static bool apply_json(const char *json, bool download) {
         cJSON *days = cJSON_GetObjectItem(item, "repeatDays"), *d;
         cJSON_ArrayForEach(d, days) if (cJSON_IsNumber(d) && d->valueint >= 1 && d->valueint <= 7) s->repeat_mask |= 1 << d->valueint;
         // Empty repeatDays means one shot, matching the parent UI.
-        if (s->enabled) {
+        ESP_LOGI(TAG, "Sched item id=%s %02u:%02u enabled=%d mask=0x%02x md5=%s fired=%ld",
+                 s->id, s->hour, s->minute, s->enabled, s->repeat_mask, s->audio_md5, (long)last_fired(s));
+        if (schedule_needs_audio(s)) {
             char path[96];
-            if (!cache_path(s, path)) complete = false;
-            else if (download && audio_download_file(s->audio_url, path, s->audio_md5) != ESP_OK) complete = false;
-            else if (!download && !audio_cache_valid(path, s->audio_md5)) s->enabled = false;
+            if (!cache_path(s, path)) {
+                ESP_LOGW(TAG, "Sched %s invalid md5='%s'", s->id, s->audio_md5);
+                complete = false;
+            } else if (download && audio_download_file(s->audio_url, path, s->audio_md5) != ESP_OK) {
+                ESP_LOGW(TAG, "Sched %s audio download failed url=%s", s->id, s->audio_url);
+                complete = false;
+            } else if (!download && !audio_cache_valid(path, s->audio_md5)) {
+                ESP_LOGW(TAG, "Sched %s local cache invalid", s->id);
+                s->enabled = false;
+            }
         }
     }
     xSemaphoreTake(s_lock, portMAX_DELAY); memcpy(s_schedules, next, MAX_SCHEDULES * sizeof(*next)); s_count = count; xSemaphoreGive(s_lock);
@@ -162,8 +181,15 @@ esp_err_t rtc_scheduler_fetch_and_sync(void) {
             FILE *f = fopen(SCHEDULE_FILE ".tmp", "wb");
             if (f) { bool ok = fwrite(r.buf, 1, r.used, f) == r.used; if (fclose(f)) ok = false; if (ok) rename(SCHEDULE_FILE ".tmp", SCHEDULE_FILE); }
             err = apply_json(r.buf, true) ? ESP_OK : ESP_FAIL;
-        } else err = ESP_FAIL;
-    } else err = ESP_FAIL;
+            ESP_LOGI(TAG, "Synced schedules: count=%d ok=%d", s_count, err == ESP_OK);
+        } else {
+            ESP_LOGW(TAG, "Schedule sync parse failed (status=%d overflow=%d used=%d)", status, r.overflow, r.used);
+            err = ESP_FAIL;
+        }
+    } else {
+        ESP_LOGW(TAG, "Schedule fetch failed (err=%s status=%d overflow=%d used=%d)", esp_err_to_name(err), status, r.overflow, r.used);
+        err = ESP_FAIL;
+    }
     free(r.buf); return err;
 }
 void rtc_scheduler_ack_active(void) {
@@ -219,7 +245,18 @@ static void rtc_monitor_task(void *arg) {
                 }
                 bool acked = atomic_exchange(&s_alarm_ack, false);
                 if (acked) save_ack(s_active.id);
-                if (played || acked) { mark_fired(s, stamp); ESP_LOGI(TAG, "Alarm finished id=%s acked=%d", s->id, acked); }
+                if (played || acked) {
+                    mark_fired(s, stamp);
+                    if (s->repeat_mask == 0) {
+                        xSemaphoreTake(s_lock, portMAX_DELAY);
+                        bool in_use = audio_md5_in_use(s_schedules, s_count, s->audio_md5, s->id);
+                        xSemaphoreGive(s_lock);
+                        if (!in_use && unlink(path) == 0) {
+                            ESP_LOGI(TAG, "Cleaned up one-shot alarm audio %s", path);
+                        }
+                    }
+                    ESP_LOGI(TAG, "Alarm finished id=%s acked=%d", s->id, acked);
+                }
                 atomic_store(&s_alarm_active, false);
                 ui_hide_alarm_modal();
                 atomic_fetch_add(&s_version, 1);
