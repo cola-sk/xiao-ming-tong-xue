@@ -23,7 +23,7 @@ export const Layout: React.FC = () => {
   const tabs = [
     {
       key: 'wechat',
-      title: '亲子微聊',
+      title: '亲子聊',
       icon: <IconChatBubble className="w-[18px] h-[18px]" />,
       badge: unreadChildVoiceCount > 0 ? unreadChildVoiceCount : undefined,
     },
@@ -55,7 +55,7 @@ export const Layout: React.FC = () => {
             <BrandLogoXiaoming className="w-9 h-9 shrink-0 rounded-xl shadow-sm" />
             <div>
               <h1 className="parent-app-title leading-none">小铭同学</h1>
-              <div className="parent-app-subtitle">智能语音萌宠 · 亲子微聊空间</div>
+              <div className="parent-app-subtitle">智能语音萌宠 · 亲子聊空间</div>
             </div>
           </div>
 

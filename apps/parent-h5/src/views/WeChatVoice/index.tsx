@@ -106,6 +106,48 @@ export const WeChatVoicePage: React.FC = () => {
     totalBytes: 0,
   });
 
+  const chatListRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const scrollToBottom = (smooth = false) => {
+    const el = chatListRef.current;
+    if (!el) return;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    isNearBottomRef.current = true;
+    setShowScrollBottom(false);
+  };
+
+  const handleChatScroll = () => {
+    const el = chatListRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isAtBottom = distanceToBottom <= 40;
+    isNearBottomRef.current = isAtBottom;
+    setShowScrollBottom(!isAtBottom && visibleMessages.length > 2);
+  };
+
+  // 当切换到亲子聊子标签页或初次加载时，自动滚动到底部显示最新消息
+  useEffect(() => {
+    if (activeSubTab === 'chat') {
+      const timer = window.setTimeout(() => {
+        scrollToBottom(false);
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [activeSubTab]);
+
+  // 当消息列表增加时，若位于底部则保持在底部，用户向上滚动查看历史消息时不打断
+  useEffect(() => {
+    if (isNearBottomRef.current) {
+      scrollToBottom(false);
+    }
+  }, [visibleMessages.length]);
+
   const refreshLocalStats = () => {
     void getLocalChatAudioStats().then(setLocalCacheStats);
   };
@@ -261,6 +303,8 @@ export const WeChatVoicePage: React.FC = () => {
         refreshLocalStats();
         setTextInput('');
         Toast.show({ icon: 'success', content: '语音已发送，等待设备同步' });
+        isNearBottomRef.current = true;
+        scrollToBottom(true);
       }
     } catch {
       if (mountedRef.current) Toast.show({ content: '发送失败，请重新录音' });
@@ -289,6 +333,8 @@ export const WeChatVoicePage: React.FC = () => {
       icon: 'success',
       content: '已发送，等待设备同步',
     });
+    isNearBottomRef.current = true;
+    scrollToBottom(true);
     } catch {
       Toast.show({ content: '发送失败，请重试' });
     }
@@ -336,7 +382,7 @@ export const WeChatVoicePage: React.FC = () => {
 
       </div>
 
-      {/* 子标签页切换：亲子微聊 / AI 伴聊记录 */}
+      {/* 子标签页切换：亲子聊 / AI聊天记录 */}
       <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#EAE8E1]">
         <button
           type="button"
@@ -347,7 +393,7 @@ export const WeChatVoicePage: React.FC = () => {
               : 'text-[#77786F]'
           }`}
         >
-          <span>亲子双向微聊</span>
+          <span>亲子聊</span>
           {visibleMessages.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F3F1EB] text-[#55574F]">
               {visibleMessages.length}
@@ -363,7 +409,7 @@ export const WeChatVoicePage: React.FC = () => {
               : 'text-[#77786F]'
           }`}
         >
-          <span>AI 伴聊记录</span>
+          <span>AI聊天记录</span>
           {aiLogs.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F3F1EB] text-[#55574F]">
               {aiLogs.length}
@@ -378,7 +424,7 @@ export const WeChatVoicePage: React.FC = () => {
       <section className="space-y-2.5">
         <div className="flex items-center justify-between px-0.5 gap-2">
           <div className="flex items-center gap-2">
-            <h3 className="approval-section-title">亲子双向微聊</h3>
+            <h3 className="approval-section-title">亲子聊</h3>
             {(visibleMessages.length > 0 || localCacheStats.count > 0) && <button type="button" onClick={clearLocalHistory} className="text-[10px] text-[#B96043] underline">清空本机记录</button>}
           </div>
           <div className="flex items-center gap-2 text-[10px] text-[#929187]">
@@ -390,13 +436,19 @@ export const WeChatVoicePage: React.FC = () => {
           </div>
         </div>
 
-        <div className="space-y-3">
-          {visibleMessages.length === 0 ? (
-            <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
-              暂无亲子微聊语音记录，点击下方录音给宝贝发送语音
-            </div>
-          ) : (
-            visibleMessages.map(msg => {
+        {/* 双向聊天消息固定高度滚动区：支持向上滚动查看历史消息 */}
+        <div className="relative">
+          <div
+            ref={chatListRef}
+            onScroll={handleChatScroll}
+            className="h-[390px] sm:h-[430px] overflow-y-auto p-3 rounded-2xl bg-[#F6F5F1] border border-[#E7E5DE] space-y-3 overscroll-contain shadow-inner"
+          >
+            {visibleMessages.length === 0 ? (
+              <div className="h-full min-h-[220px] flex items-center justify-center text-center p-6 text-xs text-[#8B8A80]">
+                暂无亲子聊记录，点击下方录音给宝贝发送语音
+              </div>
+            ) : (
+              visibleMessages.map(msg => {
             const isParent = msg.direction === 'parent_to_device';
             const isPlaying = playingId === msg.id;
             const isUnread = msg.status === 'unread';
@@ -478,6 +530,20 @@ export const WeChatVoicePage: React.FC = () => {
             );
           })
           )}
+          </div>
+
+          {/* 向上滚动查看历史消息时，提供快速回到底部的悬浮按钮 */}
+          {showScrollBottom && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              className="absolute bottom-3 right-3 z-20 px-2.5 py-1 rounded-full bg-white/95 text-[#55574F] text-[11px] font-semibold shadow-md border border-[#E5E3DC] flex items-center gap-1 hover:bg-white active:scale-95 transition-all backdrop-blur-sm"
+              title="回到底部最新消息"
+            >
+              <span>回到底部</span>
+              <span className="text-[10px]">↓</span>
+            </button>
+          )}
         </div>
       </section>
 
@@ -535,14 +601,14 @@ export const WeChatVoicePage: React.FC = () => {
       ) : (
         <section className="space-y-2.5">
           <div className="flex items-center justify-between px-0.5">
-            <h3 className="approval-section-title">最近 AI 伴聊记录</h3>
+            <h3 className="approval-section-title">AI聊天记录</h3>
             <span className="text-[11px] text-[#929187]">共 {aiLogs.length} 轮问答</span>
           </div>
 
           <div className="space-y-2.5">
             {aiLogs.length === 0 ? (
               <div className="kid-card text-center py-8 text-xs text-[#8B8A80]">
-                暂无 AI 伴聊记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
+                暂无 AI 聊天记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
               </div>
             ) : (
               aiLogs.map(log => (
