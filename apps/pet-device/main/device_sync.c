@@ -60,9 +60,19 @@ static void apply_server_config(const char *resp_json) {
             audio_engine_set_volume((uint8_t)vol->valuedouble);
         }
 
+        static bool s_chat_boot_synced = false;
+        static int s_last_unread = -1;
         cJSON *unread = cJSON_GetObjectItem(cfg, "unreadMessagesCount");
-        if (cJSON_IsNumber(unread) && unread->valueint > 0) {
-            chat_client_fetch_unread();
+        int unread_val = cJSON_IsNumber(unread) ? unread->valueint : 0;
+        if (!s_chat_boot_synced ||
+            (unread_val > 0 && unread_val != s_last_unread) ||
+            (unread_val > 0 && !chat_client_has_unread_message())) {
+            if (chat_client_fetch_history() == ESP_OK) {
+                s_chat_boot_synced = true;
+                s_last_unread = unread_val;
+            }
+        } else {
+            s_last_unread = unread_val;
         }
 
         cJSON *version = cJSON_GetObjectItem(cfg, "scheduleVersion");
@@ -114,7 +124,18 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
         .user_data = &resp_ctx,
     };
 
+    if (!pet_http_net_lock(8000)) {
+        ESP_LOGW(TAG, "Skip sync (%s): network busy", event_name ? event_name : "heartbeat");
+        cJSON_free(post_data);
+        return ESP_ERR_TIMEOUT;
+    }
+
     esp_http_client_handle_t client = pet_http_init(&config);
+    if (!client) {
+        pet_http_net_unlock();
+        cJSON_free(post_data);
+        return ESP_ERR_NO_MEM;
+    }
     pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
@@ -130,8 +151,9 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
         ESP_LOGE(TAG, "HTTPS sync failed: %s", esp_err_to_name(err));
     }
 
-    // Release TLS buffers before fetching config-dependent audio or schedules.
+    // Release TLS buffers and transport lock before fetching config-dependent audio or schedules.
     esp_http_client_cleanup(client);
+    pet_http_net_unlock();
     cJSON_free(post_data);
     if (err == ESP_OK && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) apply_server_config(resp_ctx.buf);
     return err;
@@ -155,6 +177,10 @@ static void device_sync_task(void *arg) {
     wifi_manager_log_server_address();
 
     while (1) {
+        if (audio_engine_is_busy() || chat_client_is_playing() || chat_client_is_uploading()) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
         device_sync_send_event("heartbeat");
         rtc_scheduler_flush_acks();
         ESP_LOGI(TAG, "Sync resources: stack_free=%u internal_heap=%u", (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));

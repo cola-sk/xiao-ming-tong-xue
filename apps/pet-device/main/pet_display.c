@@ -19,6 +19,7 @@ lv_display_t *pet_display_start(void) {
     bsp_display_cfg_t board = { .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),
         .rotation = ESP_LV_ADAPTER_ROTATE_0, .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE,
         .touch_flags = { .swap_xy = 1, .mirror_x = 0, .mirror_y = 1 } };
+    board.lv_adapter_cfg.task_stack_size = 12288;
     if (esp_lv_adapter_init(&board.lv_adapter_cfg) != ESP_OK) return NULL;
     esp_lcd_panel_handle_t panel; esp_lcd_panel_io_handle_t io;
     bsp_display_config_t panel_cfg = { .max_transfer_sz = BSP_LCD_H_RES * 16 * 2 };

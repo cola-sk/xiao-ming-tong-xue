@@ -85,6 +85,10 @@ void audio_engine_init(void) {
     esp_audio_dec_register_default(); esp_audio_simple_dec_register_default();
     load_pending();
     if (s_pending && !strcmp(s_pending_id, "hardware_smoke_outbox")) clear_pending();
+    if (s_pending && s_pending_target == AUDIO_TARGET_PARENT) {
+        chat_client_add_local_outgoing(s_pending_id, s_pending, s_pending_len, s_pending_mime, s_pending_duration);
+        chat_client_set_send_state(s_pending_id, CHAT_SEND_FAILED);
+    }
     ESP_LOGI(TAG, "Audio speaker=%s mic=%s outbox=%d", s_speaker ? "ready" : "failed", s_mic ? "ready" : "failed", audio_engine_has_pending());
 }
 
@@ -106,6 +110,24 @@ bool audio_engine_has_pending(void) { return atomic_load(&s_pending_available); 
 bool audio_engine_can_retry(void) {
     portENTER_CRITICAL(&s_state_lock); bool ready = !s_busy && atomic_load(&s_pending_available); portEXIT_CRITICAL(&s_state_lock);
     return ready;
+}
+bool audio_engine_can_retry_target(audio_target_t target) {
+    portENTER_CRITICAL(&s_state_lock);
+    bool ready = !s_busy && atomic_load(&s_pending_available) && s_pending_target == target;
+    portEXIT_CRITICAL(&s_state_lock);
+    return ready;
+}
+bool audio_engine_is_busy(void) {
+    portENTER_CRITICAL(&s_state_lock); bool busy = s_busy; portEXIT_CRITICAL(&s_state_lock);
+    return busy;
+}
+void audio_engine_clear_pending_if_id(const char *msg_id) {
+    if (!msg_id || !*msg_id) return;
+    portENTER_CRITICAL(&s_state_lock);
+    bool match = !s_busy && atomic_load(&s_pending_available) && strcmp(s_pending_id, msg_id) == 0;
+    if (match) s_busy = true;
+    portEXIT_CRITICAL(&s_state_lock);
+    if (match) { clear_pending(); release(); }
 }
 static void put16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
 static void put32(uint8_t *p, uint32_t v) { put16(p, v); put16(p + 2, v >> 16); }
@@ -142,6 +164,9 @@ static void record_task(void *arg) {
     snprintf(s_pending_mime, sizeof(s_pending_mime), "%s", mime);
     snprintf(s_pending_id, sizeof(s_pending_id), "msg_dev_%lld_%08lx", (long long)time(NULL), (unsigned long)esp_random());
     save_pending(); atomic_store(&s_pending_available, true); free(pcm); pcm = NULL;
+    if (s_pending_target == AUDIO_TARGET_PARENT) {
+        chat_client_add_local_outgoing(s_pending_id, s_pending, s_pending_len, s_pending_mime, s_pending_duration);
+    }
     send_pending();
 done:
     if (opened) esp_codec_dev_close(s_mic);

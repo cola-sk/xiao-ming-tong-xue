@@ -25,6 +25,20 @@ typedef struct {
     int last_triggered_min;
 } pet_schedule_t;
 
+typedef enum {
+    SCHEDULE_STATUS_PENDING = 0,
+    SCHEDULE_STATUS_RINGING = 1,
+    SCHEDULE_STATUS_DONE    = 2,
+} pet_schedule_status_t;
+
+typedef struct {
+    char id[48];
+    char title[64];
+    uint8_t hour;
+    uint8_t minute;
+    pet_schedule_status_t status;
+} pet_today_schedule_t;
+
 void rtc_scheduler_init(void);
 
 /**
@@ -37,6 +51,9 @@ esp_err_t rtc_scheduler_fetch_and_sync(void);
  * Legacy helper to sync from raw JSON payload.
  */
 void rtc_scheduler_sync_from_json(const char *schedules_json);
+
+int rtc_scheduler_get_today_schedules(pet_today_schedule_t *out, int max_items, bool *clock_valid);
+uint32_t rtc_scheduler_get_version(void);
 
 #ifdef __cplusplus
 }

@@ -22,8 +22,13 @@ static void keys_task(void *arg) {
                 if (down) {
                     ui_switch_page(i == 0 ? PET_PAGE_AI_CHAT : PET_PAGE_WECHAT);
                     started[i] = audio_engine_start_hold(targets[i]);
-                    if (!started[i]) ui_set_voice_status("音频忙或请先绑定");
-                } else if (started[i]) { audio_engine_end_hold(targets[i]); started[i] = false; }
+                    if (started[i]) ui_set_key_hold_state(targets[i], true);
+                    else ui_set_voice_status("音频忙或请先绑定");
+                } else if (started[i]) {
+                    ui_set_key_hold_state(targets[i], false);
+                    audio_engine_end_hold(targets[i]);
+                    started[i] = false;
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));

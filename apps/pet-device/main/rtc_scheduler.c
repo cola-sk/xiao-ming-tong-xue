@@ -35,6 +35,7 @@ static SemaphoreHandle_t s_lock;
 static i2c_master_dev_handle_t s_rtc;
 static atomic_bool s_alarm_active, s_alarm_ack;
 static pet_schedule_t s_active;
+static atomic_uint s_version = 1;
 #ifdef PET_HARDWARE_SMOKE
 static atomic_int s_smoke_offset;
 #endif
@@ -59,6 +60,7 @@ static void rtc_hardware_init(void) {
 void rtc_scheduler_set_time(time_t epoch) {
     if (epoch < 1700000000) return;
     struct timeval tv = { .tv_sec = epoch }; settimeofday(&tv, NULL);
+    atomic_fetch_add(&s_version, 1);
     if (!s_rtc) return;
     struct tm t; localtime_r(&epoch, &t);
     uint8_t bytes[] = { 4, to_bcd(t.tm_sec), to_bcd(t.tm_min), to_bcd(t.tm_hour), to_bcd(t.tm_mday), to_bcd(t.tm_wday), to_bcd(t.tm_mon + 1), to_bcd(t.tm_year - 100) };
@@ -131,6 +133,7 @@ static bool apply_json(const char *json, bool download) {
         }
     }
     xSemaphoreTake(s_lock, portMAX_DELAY); memcpy(s_schedules, next, MAX_SCHEDULES * sizeof(*next)); s_count = count; xSemaphoreGive(s_lock);
+    atomic_fetch_add(&s_version, 1);
     if (download && complete) prune_audio_cache(next, count);
     free(next); cJSON_Delete(root); return complete;
 }
@@ -186,10 +189,6 @@ void rtc_scheduler_flush_acks(void) {
 }
 static void rtc_monitor_task(void *arg) {
     while (1) {
-        if (atomic_load(&s_alarm_active)) {
-            if (atomic_exchange(&s_alarm_ack, false)) { save_ack(s_active.id); atomic_store(&s_alarm_active, false); ui_hide_alarm_modal(); }
-            vTaskDelay(pdMS_TO_TICKS(200)); continue;
-        }
         time_t now = time(NULL);
 #ifdef PET_HARDWARE_SMOKE
         now += atomic_load(&s_smoke_offset);
@@ -206,6 +205,7 @@ static void rtc_monitor_task(void *arg) {
                 // MD5 is checked on download/load; avoid re-reading the entire file at its due time.
                 if (!cache_path(s, path) || stat(path, &cached) || cached.st_size <= 0 || cached.st_size > 1024 * 1024) continue;
                 s_active = *s; atomic_store(&s_alarm_ack, false); atomic_store(&s_alarm_active, true);
+                atomic_fetch_add(&s_version, 1);
                 ESP_LOGI(TAG, "Alarm due id=%s repeats=%u", s->id, s->repeat_play_count);
                 ui_trigger_alarm_modal(s->id, s->title, path);
                 bool played = false;
@@ -213,15 +213,80 @@ static void rtc_monitor_task(void *arg) {
                     esp_err_t err = audio_engine_play_file(path);
                     if (err != ESP_OK) break;
                     played = true;
-                    vTaskDelay(pdMS_TO_TICKS(300));
+                    if (!atomic_load(&s_alarm_ack) && n + 1 < s->repeat_play_count) {
+                        vTaskDelay(pdMS_TO_TICKS(300));
+                    }
                 }
-                if (played || atomic_load(&s_alarm_ack)) { mark_fired(s, stamp); ESP_LOGI(TAG, "Alarm played id=%s", s->id); }
-                else { atomic_store(&s_alarm_active, false); ui_hide_alarm_modal(); }
+                bool acked = atomic_exchange(&s_alarm_ack, false);
+                if (acked) save_ack(s_active.id);
+                if (played || acked) { mark_fired(s, stamp); ESP_LOGI(TAG, "Alarm finished id=%s acked=%d", s->id, acked); }
+                atomic_store(&s_alarm_active, false);
+                ui_hide_alarm_modal();
+                atomic_fetch_add(&s_version, 1);
                 break;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+}
+uint32_t rtc_scheduler_get_version(void) {
+    return atomic_load(&s_version);
+}
+int rtc_scheduler_get_today_schedules(pet_today_schedule_t *out, int max_items, bool *clock_valid) {
+    time_t now = time(NULL);
+    bool valid = now > 1700000000;
+    if (clock_valid) *clock_valid = valid;
+    if (!valid || !out || max_items <= 0 || !s_lock) return 0;
+
+    pet_schedule_t *candidates = calloc(MAX_SCHEDULES, sizeof(*candidates));
+    pet_today_schedule_t *sorted = calloc(MAX_SCHEDULES, sizeof(*sorted));
+    if (!candidates || !sorted) {
+        free(candidates);
+        free(sorted);
+        return 0;
+    }
+
+    struct tm t; localtime_r(&now, &t);
+    int32_t stamp = schedule_date_stamp(&t);
+    int count = 0;
+    bool ringing = atomic_load(&s_alarm_active);
+    char active_id[48] = {0};
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    count = s_count;
+    memcpy(candidates, s_schedules, MAX_SCHEDULES * sizeof(*candidates));
+    if (ringing) snprintf(active_id, sizeof(active_id), "%s", s_active.id);
+    xSemaphoreGive(s_lock);
+
+    int found = 0;
+    for (int i = 0; i < count && found < MAX_SCHEDULES; i++) {
+        const pet_schedule_t *s = &candidates[i];
+        int32_t fired = last_fired(s);
+        if (!schedule_is_for_today(s->enabled, s->repeat_mask, &t, fired)) continue;
+
+        pet_today_schedule_t item = {0};
+        snprintf(item.id, sizeof(item.id), "%s", s->id);
+        snprintf(item.title, sizeof(item.title), "%s", s->title);
+        item.hour = s->hour;
+        item.minute = s->minute;
+        if (ringing && strcmp(s->id, active_id) == 0) item.status = SCHEDULE_STATUS_RINGING;
+        else if (fired == stamp) item.status = SCHEDULE_STATUS_DONE;
+        else item.status = SCHEDULE_STATUS_PENDING;
+
+        int pos = found;
+        int item_min = (int)item.hour * 60 + item.minute;
+        while (pos > 0 && ((int)sorted[pos - 1].hour * 60 + sorted[pos - 1].minute) > item_min) {
+            sorted[pos] = sorted[pos - 1];
+            pos--;
+        }
+        sorted[pos] = item;
+        found++;
+    }
+    int copy_count = found < max_items ? found : max_items;
+    memcpy(out, sorted, (size_t)copy_count * sizeof(*out));
+    free(candidates);
+    free(sorted);
+    return copy_count;
 }
 void rtc_scheduler_init(void) {
     s_lock = xSemaphoreCreateMutex(); setenv("TZ", "CST-8", 1); tzset(); rtc_hardware_init();

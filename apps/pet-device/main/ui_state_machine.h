@@ -4,14 +4,18 @@
 
 /**
  * 微雪 ESP32-S3-Touch-AMOLED-2.16 (480x480) 界面与交互状态机
- * 1. PAGE_AI_PET: 主页 AI 伴聊 (按住触摸屏录音 -> 云端 ASR/LLM/TTS -> 播报)
- * 2. PAGE_WECHAT: 副页 爸妈微聊 (收听家长语音 / 按住屏幕或侧面按键发微信语音)
- * 3. MODAL_ALARM: 全局弹窗 定时语音提醒 (PCF85063 校时与本地定时巡检 -> 点击屏幕确认 alarm_ack)
+ * 1. PET_PAGE_HOME: 清爽首页 (时钟 / 今日定时入口 / 进入和AI聊天 / 进入和爸妈聊天)
+ * 2. PET_PAGE_WECHAT: 和爸妈聊天 (双向消息历史点击播放 + 底部按住说话)
+ * 3. PET_PAGE_SCHEDULES: 今日定时播放列表
+ * 4. PET_PAGE_AI_CHAT: 和 AI 聊天 (卡通 Bot 眼睛动效 + 状态提示 + 底部按住说话)
+ * 5. 浮层: 闹钟动效弹窗 (播完自动消失 / 点击知道了确认) & 家长新消息弹窗 (点击播放 / 关闭)
  */
 
 typedef enum {
-    PET_PAGE_AI_CHAT = 0,
-    PET_PAGE_WECHAT  = 1,
+    PET_PAGE_HOME      = 0,
+    PET_PAGE_WECHAT    = 1,
+    PET_PAGE_SCHEDULES = 2,
+    PET_PAGE_AI_CHAT   = 3,
 } pet_page_t;
 
 typedef enum {
@@ -33,6 +37,7 @@ void ui_set_voice_status(const char *status);
 void ui_set_pairing_status(const char *code, const char *status);
 
 void ui_hide_alarm_modal(void);
+void ui_set_key_hold_state(int target, bool holding);
 
 // Returns -1 when the PMU battery reading is unavailable.
 int ui_get_battery_percent(void);

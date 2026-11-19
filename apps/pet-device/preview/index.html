@@ -3,378 +3,1330 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>小铭同学 - ESP32-S3-Touch-AMOLED-2.16 (480×480) 语音宠物模拟器</title>
+  <title>小铭同学 - ESP32-S3-Touch-AMOLED-2.16 (480×480) 清新阳光版交互模拟器</title>
   <style>
     * { box-sizing: border-box; user-select: none; }
     body {
       margin: 0;
-      background: #F5F4F0;
-      color: #242620;
-      font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(145deg, #EEF6F1 0%, #F9FBF7 55%, #FFF8EC 100%);
+      color: #1E2E2B;
+      font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', sans-serif;
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
       align-items: center;
       gap: 32px;
-      padding: 32px 16px;
+      padding: 28px 16px;
     }
     .hardware-shell {
       position: relative;
-      padding: 18px;
-      background: #222521;
-      border-radius: 36px;
-      box-shadow: 0 22px 48px rgba(36, 38, 32, 0.25), inset 0 2px 5px rgba(255,255,255,0.14);
+      padding: 20px;
+      background: #232A27;
+      border-radius: 38px;
+      box-shadow: 0 24px 52px rgba(22, 56, 50, 0.22), inset 0 2px 5px rgba(255,255,255,0.16);
     }
-    /* 侧面物理按键：KEY (GPIO18) / BOOT (GPIO0) 与 PWR (AXP2101) */
     .side-btn {
       position: absolute;
-      right: -12px;
-      width: 12px;
-      background: #B96043;
+      right: -13px;
+      width: 13px;
       border: 0;
       border-radius: 0 8px 8px 0;
       cursor: pointer;
-      color: white;
+      color: #fff;
       font-size: 9px;
       writing-mode: vertical-rl;
       display: flex;
       align-items: center;
       justify-content: center;
       box-shadow: 2px 2px 6px rgba(0,0,0,0.22);
+      transition: transform 0.1s ease;
     }
-    .side-btn.boot { top: 88px; height: 74px; }
-    .side-btn.pwr { top: 188px; height: 52px; background: #55574F; }
+    .side-btn.boot { top: 88px; height: 76px; background: #2B9DF4; }
+    .side-btn.io18 { top: 184px; height: 76px; background: #2DBE7E; }
+    .side-btn.pwr { top: 280px; height: 50px; background: #5A6560; }
     .side-btn:active { transform: translateX(-2px); }
 
-    /* 2.16寸 480x480 高清正方形 AMOLED 屏幕 (按 340x340 正方形 1:1 视口预览 480x480) */
+    /* 480x480 视口 (以 400x400 等比展示，比例 5:6) */
     .screen {
       position: relative;
-      width: 340px;
-      height: 340px;
-      background: #FFFDF8;
-      border-radius: 22px;
+      width: 400px;
+      height: 400px;
+      background: #F6FBF7;
+      border-radius: 26px;
       overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      align-items: center;
-      padding: 18px 20px 18px;
+      font-size: 14px;
     }
-    .status-bar {
-      display: flex;
-      justify-content: center;
-      gap: 12px;
-      align-items: center;
-      font-size: 11px;
-      color: #77786F;
-      font-weight: 700;
-    }
-    .status-bar { width: 100%; justify-content: flex-start; gap: 8px; padding-right: 48px; }
-    .settings-open { position: absolute; top: 10px; right: 12px; border: 0; border-radius: 12px; background: #3E493F; color: white; padding: 7px 9px; cursor: pointer; font-weight: 700; }
-    .settings-screen { position: absolute; inset: 0; z-index: 20; background: #24394f; color: white; padding: 20px; text-align: left; }
-    .settings-screen[hidden] { display: none; }
-    .settings-head { display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: bold; }
-    .settings-screen button, .settings-screen select, .settings-screen input { border: 0; border-radius: 8px; padding: 9px; font: inherit; }
-    .settings-screen button { cursor: pointer; }
-    .settings-screen select, .settings-screen input { display: block; width: 100%; margin-top: 10px; }
-    .settings-screen p { margin: 12px 0; font-size: 13px; }
-    .badge-dot {
-      display: inline-block;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #EF4444;
-      margin-left: 4px;
-    }
-    .page-area {
-      flex: 1;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      cursor: pointer;
-      position: relative;
-    }
-    .pet-avatar {
-      width: 132px;
-      height: 132px;
-      border-radius: 50%;
-      background: #F8F1E3;
-      border: 3px solid #EDE1C7;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 56px;
-      transition: transform 0.2s ease;
-    }
-    .pet-avatar.active {
-      transform: scale(1.08);
-      border-color: #B96043;
-      background: #F7EBE5;
-    }
-    .state-title {
-      margin-top: 14px;
-      font-size: 16px;
-      font-weight: 800;
-      color: #242620;
-    }
-    .state-sub {
-      margin-top: 5px;
-      font-size: 12px;
-      color: #77786F;
-      line-height: 1.4;
-      padding: 0 14px;
-    }
-    .footer-tabs {
-      display: flex;
-      justify-content: center;
-      gap: 8px;
-    }
-    .tab-pill {
-      border: 1px solid #E9E7E0;
-      background: #F5F4F0;
-      color: #77786F;
-      border-radius: 999px;
-      padding: 5px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .tab-pill.active {
-      background: #3E493F;
-      color: #FFFFFF;
-      border-color: #3E493F;
-    }
-    /* 全局定时闹钟弹窗 */
-    .alarm-modal {
+    .view {
       position: absolute;
       inset: 0;
-      background: rgba(185, 96, 67, 0.96);
-      color: white;
       display: flex;
       flex-direction: column;
+      padding: 12px 14px 14px;
+    }
+    .view[hidden], [hidden] { display: none !important; }
+
+    /* Top bar */
+    .top-bar {
+      display: flex;
       align-items: center;
-      justify-content: center;
-      padding: 28px;
-      text-align: center;
-      z-index: 30;
+      justify-content: space-between;
+      height: 34px;
+      flex-shrink: 0;
+    }
+    .net-pill {
+      font-size: 13px;
+      font-weight: 600;
+      color: #627873;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .set-btn {
+      border: 0;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 16px;
+      background: #E6F2EB;
+      color: #1E2E2B;
+      font-size: 13px;
+      font-weight: 700;
       cursor: pointer;
     }
-    .alarm-modal[hidden] { display: none !important; }
-    .panel {
-      max-width: 360px;
-      background: white;
-      border: 1px solid #E9E7E0;
-      border-radius: 18px;
-      padding: 18px;
-      box-shadow: 0 5px 16px rgba(57, 53, 43, 0.04);
+
+    /* Home clock */
+    .clock-block {
+      text-align: center;
+      margin-top: 10px;
+      flex-shrink: 0;
     }
-    .panel h2 { margin: 0 0 8px; font-size: 16px; }
-    .panel p { margin: 6px 0; font-size: 12px; color: #55574F; line-height: 1.5; }
-    .panel button {
-      margin-top: 8px;
-      margin-right: 6px;
-      padding: 7px 12px;
-      border-radius: 9px;
-      border: 1px solid #E4E1D9;
-      background: #FFFDF9;
+    .clock-time {
+      font-size: 46px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      line-height: 1.05;
+      color: #163832;
+      font-variant-numeric: tabular-nums;
+    }
+    .clock-date {
+      margin-top: 4px;
+      font-size: 14px;
+      color: #627873;
+      font-weight: 600;
+    }
+
+    /* Today's schedule card */
+    .sched-entry {
+      margin-top: 12px;
+      height: 80px;
+      background: #FFF8E7;
+      border: 2px solid #F8D88B;
+      border-radius: 18px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: transform 0.12s ease;
+      flex-shrink: 0;
+    }
+    .sched-entry:active { transform: scale(0.985); }
+    .bell-circle {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #F59E0B;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .sched-entry-main { flex: 1; min-width: 0; }
+    .sched-entry-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .sched-entry-title { font-size: 14px; font-weight: 700; color: #92400E; }
+    .sched-count-pill {
+      background: #FDE68A;
+      color: #92400E;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 9px;
+      border-radius: 12px;
+    }
+    .sched-entry-next {
+      margin-top: 4px;
+      font-size: 13px;
+      color: #78350F;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Dynamic status bar */
+    .status-strip {
+      margin-top: 10px;
+      height: 38px;
+      border-radius: 14px;
+      background: #EAF6FF;
+      border: 1px solid #BAE6FD;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #1E2E2B;
+      flex-shrink: 0;
+    }
+    .status-strip.is-ok { background: #ECFDF5; border-color: #A7F3D0; color: #16A34A; }
+    .status-strip.is-err { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
+    .wave-bars {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 20px;
+    }
+    .wave-bars span {
+      width: 3px;
+      height: 8px;
+      border-radius: 2px;
+      background: #2B9DF4;
+      animation: eq 0.5s ease-in-out infinite alternate;
+    }
+    .wave-bars span:nth-child(2) { animation-delay: 0.12s; }
+    .wave-bars span:nth-child(3) { animation-delay: 0.24s; }
+    .wave-bars span:nth-child(4) { animation-delay: 0.08s; }
+    .wave-bars span:nth-child(5) { animation-delay: 0.2s; }
+    @keyframes eq { from { height: 6px; } to { height: 20px; } }
+    .retry-btn {
+      margin-left: auto;
+      border: 0;
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 14px;
+      background: #F59E0B;
+      color: #fff;
       font-size: 12px;
       font-weight: 700;
       cursor: pointer;
     }
-    .panel button.primary {
-      background: #B96043;
-      color: white;
-      border-color: #B96043;
+
+    /* Bottom dual action buttons */
+    .bottom-actions {
+      margin-top: auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      flex-shrink: 0;
     }
+    .action-wrap { position: relative; }
+    .big-btn {
+      width: 100%;
+      height: 94px;
+      border: 0;
+      border-radius: 22px;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: transform 0.1s ease, background 0.15s ease;
+    }
+    .big-btn.ai { background: #2B9DF4; }
+    .big-btn.ai:active { background: #0284C7; transform: scale(0.98); }
+    .big-btn.parent { background: #2DBE7E; }
+    .big-btn.parent:active { background: #16A34A; transform: scale(0.98); }
+    .big-btn-title { font-size: 16px; font-weight: 800; }
+    .big-btn-sub { font-size: 12px; opacity: 0.92; }
+    .unread-badge {
+      position: absolute;
+      top: -6px;
+      right: -4px;
+      min-width: 26px;
+      height: 26px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #EF4444;
+      color: #fff;
+      border: 2px solid #fff;
+      font-size: 12px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    /* Sub-page header */
+    .sub-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 36px;
+      flex-shrink: 0;
+      margin-bottom: 8px;
+    }
+    .back-btn, .icon-btn {
+      border: 0;
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 17px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .sub-title { font-size: 16px; font-weight: 800; color: #1E2E2B; }
+
+    /* Schedule list view */
+    .view.sched { background: #FFFDF7; }
+    .view.sched .back-btn { background: #FEF3C7; color: #92400E; }
+    .scroll-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 2px;
+    }
+    .sched-row {
+      background: #fff;
+      border: 1px solid #EDE5CF;
+      border-radius: 15px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sched-row.is-next { background: #FFFBEB; border: 2px solid #F59E0B; }
+    .sched-row.is-ringing { background: #FFF7ED; border: 2px solid #F97316; }
+    .sched-row-time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; color: #1E2E2B; }
+    .sched-row.is-done .sched-row-time { color: #94A3B8; }
+    .sched-row.is-next .sched-row-time, .sched-row.is-ringing .sched-row-time { color: #EA580C; }
+    .sched-row-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sched-row.is-done .sched-row-title { color: #627873; }
+    .sched-badge { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 12px; flex-shrink: 0; }
+    .sched-badge.done { background: #E2E8F0; color: #64748B; }
+    .sched-badge.next { background: #FEF3C7; color: #B45309; }
+    .sched-badge.pending { background: #ECFDF5; color: #15803D; }
+    .sched-badge.ringing { background: #F97316; color: #fff; }
+
+    /* Chat history view (Option A) */
+    .view.chat { background: #F4FAF6; }
+    .view.chat .back-btn, .view.chat .icon-btn { background: #E2F2E8; color: #1E2E2B; }
+    .bubble-row { display: flex; align-items: center; gap: 8px; }
+    .bubble-row.from-parent { justify-content: flex-start; }
+    .bubble-row.from-child { justify-content: flex-end; }
+    .bubble {
+      width: 74%;
+      border-radius: 15px;
+      padding: 10px 12px;
+      border: 1px solid #CBE7D7;
+      background: #fff;
+      text-align: left;
+      cursor: pointer;
+    }
+    .bubble.from-child { background: #D1FAE5; border-color: #6EE7B7; }
+    .bubble.is-unread { background: #FFFBEB; border: 2px solid #F59E0B; }
+    .bubble.is-failed { border: 2px solid #EF4444; }
+    .bubble.is-playing { border: 2px solid #2B9DF4; }
+    .bubble-spinner {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 3px solid #D5E8DF;
+      border-top-color: #2B9DF4;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .bubble-retry {
+      border: 0;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 16px;
+      background: #EF4444;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .bubble-meta { font-size: 12px; color: #627873; display: flex; align-items: center; gap: 6px; }
+    .bubble-meta .unread-tag, .bubble-meta .failed-tag { color: #DC2626; font-weight: 800; }
+    .bubble-voice { margin-top: 4px; font-size: 14px; font-weight: 700; color: #1E2E2B; }
+    .bubble.is-playing .bubble-voice { color: #0284C7; }
+    .bubble-text { margin-top: 4px; font-size: 13px; color: #334155; line-height: 1.35; }
+    .chat-status-line {
+      height: 24px;
+      margin: 6px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #627873;
+      flex-shrink: 0;
+    }
+    .chat-hold-btn {
+      height: 62px;
+      border: 0;
+      border-radius: 31px;
+      background: #2DBE7E;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .chat-hold-btn.holding, .chat-hold-btn:active { background: #16A34A; box-shadow: inset 0 0 0 3px #fff; }
+
+    /* AI Chat view & glowing Bot visor */
+    .view.ai { background: #F2F8FF; }
+    .view.ai .back-btn { background: #DCEEFF; color: #1E2E2B; }
+    .bot-stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 4px 12px 10px;
+    }
+    .bot-halo {
+      width: 238px;
+      height: 150px;
+      border-radius: 38px;
+      background: #E0F2FE;
+      border: 2px solid #BAE6FD;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+    .bot-face {
+      width: 220px;
+      height: 132px;
+      border-radius: 31px;
+      background: #152232;
+      border: 3px solid #60A5FA;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      transition: border-color 0.2s ease;
+    }
+    .bot-eyes {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 50px;
+      height: 44px;
+    }
+    .bot-eye {
+      position: relative;
+      width: 32px;
+      height: 40px;
+      border-radius: 15px;
+      background: #38BDF8;
+      transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease, background 0.15s ease;
+      animation: bot-blink 3.4s ease-in-out infinite;
+    }
+    .bot-glint {
+      position: absolute;
+      top: 7px;
+      right: 6px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    @keyframes bot-blink {
+      0%, 92%, 100% { transform: scaleY(1); }
+      96% { transform: scaleY(0.14); }
+    }
+    .bot-waves {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      height: 22px;
+    }
+    .bot-waves span {
+      width: 6px;
+      height: 10px;
+      border-radius: 3px;
+      background: #38BDF8;
+      opacity: 0;
+    }
+    .bot-halo.is-listening { background: #BAE6FD; border-color: #38BDF8; }
+    .bot-halo.is-listening .bot-face { border-color: #0EA5E9; }
+    .bot-halo.is-listening .bot-eye { width: 37px; height: 44px; border-radius: 17px; animation: none; }
+    .bot-halo.is-listening .bot-waves span {
+      opacity: 1;
+      background: #7DD3FC;
+      animation: eq 0.55s ease-in-out infinite alternate;
+    }
+    .bot-halo.is-listening .bot-waves span:nth-child(2) { animation-delay: 0.12s; }
+    .bot-halo.is-listening .bot-waves span:nth-child(3) { animation-delay: 0.24s; }
+    .bot-halo.is-listening .bot-waves span:nth-child(4) { animation-delay: 0.08s; }
+    .bot-halo.is-listening .bot-waves span:nth-child(5) { animation-delay: 0.2s; }
+
+    .bot-halo.is-thinking { background: #EDE9FE; border-color: #C4B5FD; }
+    .bot-halo.is-thinking .bot-face { border-color: #A78BFA; }
+    .bot-halo.is-thinking .bot-eye {
+      width: 28px;
+      height: 22px;
+      border-radius: 10px;
+      background: #93C5FD;
+      animation: bot-scan 0.9s ease-in-out infinite alternate;
+    }
+    @keyframes bot-scan { from { transform: translateX(-6px); } to { transform: translateX(6px); } }
+    .bot-halo.is-thinking .bot-waves span:nth-child(1),
+    .bot-halo.is-thinking .bot-waves span:nth-child(5) { opacity: 0; }
+    .bot-halo.is-thinking .bot-waves span:nth-child(2),
+    .bot-halo.is-thinking .bot-waves span:nth-child(3),
+    .bot-halo.is-thinking .bot-waves span:nth-child(4) {
+      opacity: 1;
+      height: 7px;
+      background: #C4B5FD;
+      animation: eq 0.6s ease-in-out infinite alternate;
+    }
+    .bot-halo.is-thinking .bot-waves span:nth-child(3) { animation-delay: 0.2s; }
+    .bot-halo.is-thinking .bot-waves span:nth-child(4) { animation-delay: 0.4s; }
+
+    .bot-halo.is-speaking { background: #CFFAFE; border-color: #67E8F9; }
+    .bot-halo.is-speaking .bot-face { border-color: #22D3EE; }
+    .bot-halo.is-speaking .bot-eye {
+      width: 35px;
+      height: 30px;
+      border-radius: 14px;
+      background: #22D3EE;
+      animation: bot-bounce 0.35s ease-in-out infinite alternate;
+    }
+    @keyframes bot-bounce { from { transform: translateY(2px); } to { transform: translateY(-4px); } }
+    .bot-halo.is-speaking .bot-waves span {
+      opacity: 1;
+      background: #22D3EE;
+      animation: eq 0.32s ease-in-out infinite alternate;
+    }
+    .bot-halo.is-speaking .bot-waves span:nth-child(2) { animation-delay: 0.1s; }
+    .bot-halo.is-speaking .bot-waves span:nth-child(3) { animation-delay: 0.2s; }
+    .bot-halo.is-speaking .bot-waves span:nth-child(4) { animation-delay: 0.06s; }
+    .bot-halo.is-speaking .bot-waves span:nth-child(5) { animation-delay: 0.16s; }
+
+    .ai-status-text {
+      min-height: 24px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #627873;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .ai-status-text.is-active { color: #0284C7; }
+    .ai-status-text.is-ok { color: #16A34A; }
+    .ai-status-text.is-err { color: #DC2626; }
+    .ai-retry-btn {
+      border: 0;
+      height: 36px;
+      padding: 0 18px;
+      border-radius: 18px;
+      background: #F59E0B;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .ai-hold-btn {
+      height: 62px;
+      border: 0;
+      border-radius: 31px;
+      background: #2B9DF4;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .ai-hold-btn.holding, .ai-hold-btn:active { background: #0284C7; box-shadow: inset 0 0 0 3px #fff; }
+
+    /* Overlays: Alarm & Incoming Message & Settings */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+    .overlay.alarm-bg { background: #FFF7ED; }
+    .overlay.scrim-bg { background: rgba(30, 46, 43, 0.5); }
+    .modal-card {
+      position: relative;
+      width: 100%;
+      background: #fff;
+      border-radius: 24px;
+      padding: 22px 20px;
+      text-align: center;
+    }
+    .modal-card.alarm { border: 3px solid #F97316; }
+    .modal-card.msg { border: 3px solid #2DBE7E; }
+    .halo-wrap {
+      position: relative;
+      width: 118px;
+      height: 118px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .alarm-halo {
+      position: absolute;
+      width: 116px;
+      height: 116px;
+      border-radius: 50%;
+      background: #FFEDD5;
+      border: 2px solid #FDBA74;
+      animation: pulse 0.9s ease-in-out infinite alternate;
+    }
+    .alarm-bell {
+      position: relative;
+      width: 84px;
+      height: 84px;
+      border-radius: 50%;
+      background: #F97316;
+      color: #fff;
+      font-size: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: sway 0.45s ease-in-out infinite alternate;
+    }
+    @keyframes pulse { from { transform: scale(0.92); } to { transform: scale(1.06); } }
+    @keyframes sway { from { transform: translateX(-5px) rotate(-8deg); } to { transform: translateX(5px) rotate(8deg); } }
+    .alarm-time { margin-top: 10px; font-size: 40px; font-weight: 800; color: #EA580C; font-variant-numeric: tabular-nums; }
+    .alarm-title { margin-top: 6px; font-size: 18px; font-weight: 800; color: #1E2E2B; }
+    .alarm-sub { margin-top: 6px; font-size: 13px; color: #9A3412; }
+    .alarm-stop {
+      margin-top: 18px;
+      width: 210px;
+      height: 48px;
+      border: 0;
+      border-radius: 24px;
+      background: #F97316;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .msg-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: 0;
+      background: #F1F5F9;
+      color: #64748B;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .msg-ring {
+      width: 88px;
+      height: 88px;
+      margin: 4px auto 0;
+      border-radius: 50%;
+      background: #D1FAE5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .msg-ring.playing { animation: pulse 0.45s ease-in-out infinite alternate; }
+    .msg-icon {
+      width: 66px;
+      height: 66px;
+      border-radius: 50%;
+      background: #2DBE7E;
+      color: #fff;
+      font-size: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .msg-head { margin-top: 14px; font-size: 18px; font-weight: 800; color: #1E2E2B; }
+    .msg-sub { margin-top: 6px; font-size: 14px; color: #627873; }
+    .msg-play-btn {
+      margin-top: 20px;
+      width: 240px;
+      height: 54px;
+      border: 0;
+      border-radius: 27px;
+      background: #2DBE7E;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .msg-play-btn.playing { background: #2B9DF4; }
+
+    /* Settings view */
+    .settings-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      background: #F6FBF7;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .settings-screen select, .settings-screen input {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border: 1px solid #DCEBE1;
+      background: #fff;
+      font: inherit;
+    }
+    .settings-screen .pill {
+      border: 0;
+      padding: 9px 16px;
+      border-radius: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #fff;
+      background: #2B9DF4;
+      align-self: flex-start;
+    }
+
+    /* Simulator side panel */
+    .panel {
+      max-width: 380px;
+      background: #fff;
+      border: 1px solid #DCEBE1;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(22, 56, 50, 0.06);
+    }
+    .panel h2 { margin: 0 0 8px; font-size: 17px; color: #163832; }
+    .panel p { margin: 6px 0; font-size: 13px; color: #526B65; line-height: 1.55; }
+    .sim-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .sim-btns button {
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid #DCEBE1;
+      background: #F6FBF7;
+      color: #1E2E2B;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .sim-btns button.warm { background: #F97316; color: #fff; border-color: #F97316; }
+    .sim-btns button.green { background: #2DBE7E; color: #fff; border-color: #2DBE7E; }
   </style>
 </head>
 <body>
   <div class="hardware-shell">
-    <button class="side-btn boot" id="bootBtn" title="按住给爸妈发微聊语音">KEY微聊</button>
-    <button class="side-btn pwr" id="pwrBtn" title="短按切换页面">PWR切换</button>
+    <button class="side-btn boot" id="bootBtn" title="按住通过侧面 BOOT 键问 AI">BOOT AI</button>
+    <button class="side-btn io18" id="io18Btn" title="按住侧面 IO18 键给爸妈发语音">IO18 微聊</button>
+    <button class="side-btn pwr" id="pwrBtn" title="返回首页">HOME</button>
 
     <main class="screen" data-resolution="480x480">
-      <div class="status-bar">
-        <span id="wifiState">Wi-Fi OK</span>
-        <span id="statusUnread">MSG</span>
-        <span>BAT 88%</span>
-        <button class="settings-open" id="settingsOpen" aria-label="打开设置">SET</button>
-      </div>
+      <!-- 1. 清爽首页 -->
+      <section class="view" id="homeView">
+        <div class="top-bar">
+          <div class="net-pill"><span id="wifiState">📶 在线</span><span>🔋 88%</span></div>
+          <button class="set-btn" id="settingsOpen">⚙ 设置</button>
+        </div>
 
-      <section class="settings-screen" id="settingsScreen" hidden>
-        <div class="settings-head"><span>Settings</span><button id="settingsClose" aria-label="关闭设置">✕</button></div>
-        <p>Volume 80% <span style="opacity:.7">（由家长端设置）</span></p>
-        <button id="scanWifi">Scan Wi-Fi</button>
-        <p id="wifiHint">模拟预览：扫描附近 Wi-Fi</p>
-        <select id="wifiSelect" aria-label="选择 Wi-Fi"><option value="">--</option></select>
-        <input id="wifiPassword" type="password" maxlength="63" placeholder="Wi-Fi password" aria-label="Wi-Fi 密码" />
-        <button id="connectWifi" style="margin-top:12px">Connect</button>
+        <div class="clock-block">
+          <div class="clock-time" id="clockTime">14:59</div>
+          <div class="clock-date" id="clockDate">11月19日  周四</div>
+        </div>
+
+        <div class="sched-entry" id="schedEntry">
+          <div class="bell-circle">⏰</div>
+          <div class="sched-entry-main">
+            <div class="sched-entry-top">
+              <span class="sched-entry-title">今日定时播放</span>
+              <span class="sched-count-pill" id="homeSchedCount">3项 ›</span>
+            </div>
+            <div class="sched-entry-next" id="homeSchedNext">下一条 20:30 晚上刷牙睡觉提醒</div>
+          </div>
+        </div>
+
+        <div class="status-strip" id="homeStatusStrip" hidden>
+          <div class="wave-bars" id="homeWaves" hidden>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span id="homeStatusText" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+          <button class="retry-btn" id="homeRetryBtn" hidden>重发</button>
+        </div>
+
+        <div class="bottom-actions">
+          <div class="action-wrap">
+            <button class="big-btn ai" id="btnAiOpen">
+              <span class="big-btn-title">🎙 和 AI 聊天</span>
+              <span class="big-btn-sub">点击进入 · 语音对话</span>
+            </button>
+          </div>
+          <div class="action-wrap">
+            <button class="big-btn parent" id="btnParentOpen">
+              <span class="big-btn-title">💬 和爸妈聊天</span>
+              <span class="big-btn-sub">发语音 · 看消息历史</span>
+            </button>
+            <span class="unread-badge" id="homeUnreadBadge">1</span>
+          </div>
+        </div>
       </section>
 
-      <!-- 主触控区 -->
-      <div class="page-area" id="touchZone">
-        <div class="pet-avatar" id="avatarBox">🐶</div>
-        <div class="state-title" id="stateTitle">小铭同学 · 待机中</div>
-        <div class="state-sub" id="stateSub">按住 480×480 触摸屏跟小铭同学说话，松手发送</div>
-      </div>
-
-      <!-- 底部左右滑动/页签指示 -->
-      <div class="footer-tabs">
-        <button class="tab-pill active" id="tabAi">1. 小铭同学</button>
-        <button class="tab-pill" id="tabWechat">2. 爸妈微聊 <span class="badge-dot" id="unreadDot"></span></button>
-      </div>
-
-      <!-- 全局弹窗：RTC 定时语音播报 -->
-      <div class="alarm-modal" id="alarmModal" hidden>
-        <div style="font-size: 42px;">⏰</div>
-        <div style="font-size: 17px; font-weight: 800; margin-top: 8px;" id="alarmTitle">20:30 刷牙睡觉提醒</div>
-        <div style="font-size: 12px; margin-top: 6px; opacity: 0.92;" id="alarmText">“宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！”</div>
-        <div style="margin-top: 18px; padding: 7px 16px; border-radius: 999px; background: white; color: #B96043; font-size: 12px; font-weight: 800;">
-          点击触摸屏确认收到 (alarm_ack)
+      <!-- 2. 二级页：和 AI 聊天 (Bot 眼睛动效 + 按住说话) -->
+      <section class="view ai" id="aiView" hidden>
+        <div class="sub-header">
+          <button class="back-btn" id="aiBack">‹ 返回</button>
+          <span class="sub-title">和 AI 聊天</span>
+          <span style="width:62px;"></span>
         </div>
-      </div>
+        <div class="bot-stage">
+          <div class="bot-halo" id="botHalo">
+            <div class="bot-face">
+              <div class="bot-eyes">
+                <div class="bot-eye"><span class="bot-glint"></span></div>
+                <div class="bot-eye"><span class="bot-glint"></span></div>
+              </div>
+              <div class="bot-waves">
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+          <div class="ai-status-text" id="aiStatusText">按住下方按钮，开始对话</div>
+          <button class="ai-retry-btn" id="aiRetryBtn" hidden>↻ 重新发送</button>
+        </div>
+        <button class="ai-hold-btn" id="aiHoldBtn">🎙 按住说话，问问 AI</button>
+      </section>
+
+      <!-- 3. 二级页：今日定时播放列表 -->
+      <section class="view sched" id="schedView" hidden>
+        <div class="sub-header">
+          <button class="back-btn" id="schedBack">‹ 返回</button>
+          <span class="sub-title">今日定时播放</span>
+          <span style="font-size:13px;font-weight:700;color:#92400E;" id="schedCountTop">共 3 项</span>
+        </div>
+        <div class="scroll-list" id="schedList"></div>
+      </section>
+
+      <!-- 3. 二级页：和爸妈聊天 & 消息历史 (方式 A) -->
+      <section class="view chat" id="chatView" hidden>
+        <div class="sub-header">
+          <button class="back-btn" id="chatBack">‹ 返回</button>
+          <span class="sub-title">和爸妈聊天</span>
+          <button class="icon-btn" id="chatRefreshBtn" title="刷新消息">↻</button>
+        </div>
+        <div class="scroll-list" id="chatList"></div>
+        <div class="chat-status-line">
+          <span id="chatStatusText">点击气泡可重听，按住下方发送</span>
+          <button class="retry-btn" id="chatRetryBtn" hidden>重发</button>
+        </div>
+        <button class="chat-hold-btn" id="chatHoldBtn">🎙 按住说话，发给爸妈</button>
+      </section>
+
+      <!-- 4. 浮层：定时播报闹钟动效 (播完自动消失) -->
+      <section class="overlay alarm-bg" id="alarmOverlay" hidden>
+        <div class="modal-card alarm">
+          <div class="halo-wrap">
+            <div class="alarm-halo"></div>
+            <div class="alarm-bell">🔔</div>
+          </div>
+          <div class="alarm-time" id="alarmTime">20:30</div>
+          <div class="alarm-title" id="alarmTitle">晚上刷牙睡觉提醒</div>
+          <div class="alarm-sub">定时语音播报中…（播完自动关闭）</div>
+          <button class="alarm-stop" id="alarmAckBtn">知道了 · 停止</button>
+        </div>
+      </section>
+
+      <!-- 5. 浮层：家长新消息突出弹窗 (可播放 / 可关闭) -->
+      <section class="overlay scrim-bg" id="msgPopup" hidden>
+        <div class="modal-card msg">
+          <button class="msg-close" id="msgCloseBtn" aria-label="关闭">✕</button>
+          <div class="msg-ring" id="msgRing">
+            <div class="msg-icon">🔊</div>
+          </div>
+          <div class="msg-head" id="msgPopupTitle">妈妈发来新消息</div>
+          <div class="msg-sub" id="msgPopupSub">5秒语音消息 · 共 1 条未读</div>
+          <button class="msg-play-btn" id="msgPlayBtn">▶ 点击播放</button>
+        </div>
+      </section>
+
+      <!-- 6. 设置浮层 -->
+      <section class="settings-screen" id="settingsScreen" hidden>
+        <div class="sub-header">
+          <span class="sub-title">设备设置</span>
+          <button class="back-btn" id="settingsClose" style="background:#E2E8F0;color:#1E2E2B;">✕</button>
+        </div>
+        <div style="font-size:13px;color:#627873;">当前音量：80%（家长端设置）</div>
+        <button class="pill" id="scanWifi">Scan Wi-Fi</button>
+        <div id="wifiHint" style="font-size:13px;color:#627873;">扫描附近 Wi-Fi</div>
+        <select id="wifiSelect"><option value="">--</option></select>
+        <input id="wifiPassword" type="password" placeholder="Wi-Fi password" />
+        <button class="pill" id="connectWifi" style="background:#2DBE7E;">Connect</button>
+      </section>
     </main>
   </div>
 
   <aside class="panel">
-    <h2>「小铭同学」ESP32-S3-Touch-AMOLED-2.16 模拟器</h2>
-    <p>分辨率 <strong>480 × 480</strong> 高清 AMOLED (`CO5300` + `CST9220`) · 双麦硬件回声消除 `ES7210 (AEC)` + 喇叭 `ES8311` + 硬件 RTC `PCF85063`。</p>
-    <p>1. <strong>按住屏幕中央</strong>：在主页跟「小铭同学」AI 对话；在副页点击收听妈妈语音。</p>
-    <p>2. <strong>按住右侧橙色 KEY 键 (GPIO18/BOOT)</strong>：无论在哪个页面，盲操直接给爸妈录微信语音。</p>
-    <p>3. <strong>点击下方按钮测试云端/RTC 下发</strong>：</p>
-    <div>
-      <button class="primary" id="simRtcBtn">触发 20:30 RTC 定时播报</button>
-      <button id="simParentMsgBtn">模拟妈妈发来新语音</button>
+    <h2>「小铭同学」480×480 清新阳光版交互预览</h2>
+    <p><strong>1. 清爽首页</strong>：去掉冗余元素，展示实时时钟、今日定时摘要入口，以及底部常驻双按钮。</p>
+    <p><strong>2. 和 AI 聊天</strong>：点击左下角（或按右侧蓝色 BOOT 键）进入 Bot 专属语音页，按住说话、松开发送，播报时展示可爱 Bot 眼睛动效。</p>
+    <p><strong>3. 和爸妈聊天 & 历史</strong>：点击右下角进入微信式历史气泡页，点击任意气泡可重听，底部按住发语音。</p>
+    <p><strong>4. 定时 & 消息浮层</strong>：闹钟响铃展示动效并<strong>播完自动消失</strong>；新消息突出弹窗，支持<strong>点击播放</strong>或<strong>关闭保留未读红点</strong>。</p>
+    <div class="sim-btns">
+      <button class="warm" id="simAlarmBtn">触发定时播报 (自动消失)</button>
+      <button class="green" id="simMsgBtn">妈妈发来新语音</button>
+      <button id="simMultiMsgBtn">连发 2 条未读消息</button>
+      <button id="simFailBtn">模拟发送失败 (左侧重试)</button>
+      <button id="simAiFailBtn">模拟 AI 发送失败</button>
     </div>
   </aside>
 
   <script>
-    let page = 'ai'; // 'ai' | 'wechat'
-    let unread = true;
-    const avatarBox = document.getElementById('avatarBox');
-    const stateTitle = document.getElementById('stateTitle');
-    const stateSub = document.getElementById('stateSub');
-    const tabAi = document.getElementById('tabAi');
-    const tabWechat = document.getElementById('tabWechat');
-    const unreadDot = document.getElementById('unreadDot');
-    const touchZone = document.getElementById('touchZone');
-    const bootBtn = document.getElementById('bootBtn');
-    const pwrBtn = document.getElementById('pwrBtn');
-    const alarmModal = document.getElementById('alarmModal');
-
-    const settingsScreen = document.getElementById('settingsScreen');
-    const wifiSelect = document.getElementById('wifiSelect');
-    const wifiHint = document.getElementById('wifiHint');
-    document.getElementById('settingsOpen').onclick = () => { settingsScreen.hidden = false; };
-    document.getElementById('settingsClose').onclick = () => { settingsScreen.hidden = true; };
-    document.getElementById('scanWifi').onclick = () => {
-      wifiSelect.replaceChildren(new Option('Home Wi-Fi（模拟）', 'Home Wi-Fi'), new Option('Guest Wi-Fi（模拟）', 'Guest Wi-Fi'));
-      wifiHint.textContent = '模拟预览：请选择网络';
-    };
-    document.getElementById('connectWifi').onclick = () => {
-      if (!wifiSelect.value) { wifiHint.textContent = '请先扫描并选择网络'; return; }
-      wifiHint.textContent = '模拟预览：已连接 ' + wifiSelect.value;
-      document.getElementById('wifiState').textContent = 'Wi-Fi OK';
-      document.getElementById('wifiPassword').value = '';
+    const state = {
+      page: 'home',
+      aiState: 'idle',
+      canRetry: false,
+      statusText: '',
+      statusTone: '',
+      animating: false,
+      dismissedId: '',
+      playingId: '',
+      alarmActive: false,
+      holdingTarget: '',
+      schedules: [
+        { id: 's1', time: '07:30', title: '起床唤醒', status: 'done' },
+        { id: 's2', time: '16:30', title: '放学喝水提醒', status: 'pending' },
+        { id: 's3', time: '20:30', title: '晚上刷牙睡觉提醒', status: 'pending' },
+      ],
+      messages: [
+        { id: 'm1', fromParent: true, sender: '爸爸', time: '08:15', duration: 4, text: '宝贝今天在幼儿园要开心哦！', unread: false },
+        { id: 'm2', fromParent: false, sender: '宝贝', time: '12:20', duration: 3, text: '', unread: false },
+        { id: 'm3', fromParent: true, sender: '妈妈', time: '14:55', duration: 5, text: '宝贝，放学回家先喝口温水哦！', unread: true },
+      ],
     };
 
-    function speak(text) {
+    const $ = id => document.getElementById(id);
+    let alarmTimer = null;
+    let playTimer = null;
+    let statusTimer = null;
+
+    function speakText(text, onDone) {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
         u.lang = 'zh-CN';
-        u.pitch = 1.25;
+        u.pitch = 1.18;
+        let finished = false;
+        const done = () => { if (!finished) { finished = true; onDone && onDone(); } };
+        u.onend = done;
+        u.onerror = done;
         window.speechSynthesis.speak(u);
+        return setTimeout(done, 4500);
+      }
+      return setTimeout(() => onDone && onDone(), 2400);
+    }
+
+    function setStatus(text, tone = '', animating = false, autoClearMs = 0) {
+      clearTimeout(statusTimer);
+      state.statusText = text;
+      state.statusTone = tone;
+      state.animating = animating;
+      renderStatus();
+      if (autoClearMs > 0) {
+        statusTimer = setTimeout(() => {
+          state.statusText = '';
+          state.animating = false;
+          renderStatus();
+        }, autoClearMs);
       }
     }
 
-    function renderPage() {
-      unreadDot.style.display = unread ? 'inline-block' : 'none';
-      document.getElementById('statusUnread').textContent = unread ? 'MSG' : '--';
-      if (page === 'ai') {
-        tabAi.classList.add('active');
-        tabWechat.classList.remove('active');
-        avatarBox.textContent = '🐶';
-        stateTitle.textContent = '小铭同学 · 待机眨眼';
-        stateSub.textContent = '按住屏幕跟小铭同学说话 · 按住侧面键给爸妈发语音';
+    function getUnreadList() {
+      return state.messages.filter(m => m.fromParent && m.unread);
+    }
+
+    function renderStatus() {
+      const strip = $('homeStatusStrip');
+      const show = Boolean(state.statusText || state.canRetry);
+      strip.hidden = !show;
+      strip.className = 'status-strip' + (state.statusTone ? ' ' + state.statusTone : '');
+      $('homeWaves').hidden = !state.animating;
+      $('homeStatusText').textContent = state.statusText || '上一条语音发送未完成';
+      $('homeRetryBtn').hidden = !state.canRetry;
+      $('chatStatusText').textContent = state.statusText || '点击气泡可重听，按住下方发送';
+      $('chatRetryBtn').hidden = true;
+
+      const halo = $('botHalo');
+      halo.className = 'bot-halo' + (state.aiState !== 'idle' ? ' is-' + state.aiState : '');
+      const aiTxt = state.statusText || (state.canRetry ? '发送失败，可点击重发或重录' : '按住下方按钮，开始对话');
+      const aiEl = $('aiStatusText');
+      aiEl.textContent = aiTxt;
+      aiEl.className = 'ai-status-text' + (
+        state.statusTone === 'is-err' || (!state.statusText && state.canRetry) ? ' is-err'
+        : state.statusTone === 'is-ok' ? ' is-ok'
+        : state.aiState !== 'idle' ? ' is-active' : ''
+      );
+      $('aiRetryBtn').hidden = !state.canRetry;
+    }
+
+    function renderSchedules() {
+      const next = state.schedules.find(s => s.status === 'ringing') || state.schedules.find(s => s.status === 'pending');
+      $('homeSchedCount').textContent = state.schedules.length + '项 ›';
+      $('homeSchedNext').textContent = next
+        ? (next.status === 'ringing' ? '正在播 ' : '下一条 ') + next.time + ' ' + next.title
+        : '今日定时已全部播完';
+      $('schedCountTop').textContent = '共 ' + state.schedules.length + ' 项';
+
+      const list = $('schedList');
+      list.replaceChildren();
+      state.schedules.forEach(s => {
+        const isNext = next && next.id === s.id && s.status === 'pending';
+        const row = document.createElement('div');
+        row.className = 'sched-row' +
+          (s.status === 'ringing' ? ' is-ringing' : isNext ? ' is-next' : s.status === 'done' ? ' is-done' : '');
+        row.innerHTML =
+          '<span class="sched-row-time">' + s.time + '</span>' +
+          '<span class="sched-row-title">' + s.title + '</span>' +
+          '<span class="sched-badge ' + (s.status === 'ringing' ? 'ringing' : s.status === 'done' ? 'done' : isNext ? 'next' : 'pending') + '">' +
+          (s.status === 'ringing' ? '播报中' : s.status === 'done' ? '已播' : isNext ? '下一条' : '待播') + '</span>';
+        list.appendChild(row);
+      });
+    }
+
+    function renderChat() {
+      const unread = getUnreadList();
+      const badge = $('homeUnreadBadge');
+      badge.hidden = unread.length === 0;
+      badge.textContent = unread.length > 9 ? '9+' : String(unread.length);
+
+      const list = $('chatList');
+      list.replaceChildren();
+      state.messages.forEach(m => {
+        const row = document.createElement('div');
+        row.className = 'bubble-row ' + (m.fromParent ? 'from-parent' : 'from-child');
+        if (!m.fromParent && m.sendState === 'sending') {
+          const sp = document.createElement('div');
+          sp.className = 'bubble-spinner';
+          sp.title = '正在发送…';
+          row.appendChild(sp);
+        } else if (!m.fromParent && m.sendState === 'failed') {
+          const rb = document.createElement('button');
+          rb.type = 'button';
+          rb.className = 'bubble-retry';
+          rb.textContent = '↻ 重试';
+          rb.onclick = () => retryOutgoing(m.id);
+          row.appendChild(rb);
+        }
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const isPlaying = state.playingId === m.id;
+        btn.className = 'bubble ' + (m.fromParent ? 'from-parent' : 'from-child') +
+          (m.fromParent && m.unread ? ' is-unread' : '') +
+          (!m.fromParent && m.sendState === 'failed' ? ' is-failed' : '') +
+          (isPlaying ? ' is-playing' : '');
+        const tag = (m.fromParent && m.unread) ? '<span class="unread-tag">• 未读</span>'
+          : m.sendState === 'sending' ? '<span>• 发送中</span>'
+          : m.sendState === 'failed' ? '<span class="failed-tag">• 发送失败</span>' : '';
+        btn.innerHTML =
+          '<div class="bubble-meta"><span>' + m.sender + '  ' + m.time + '</span>' + tag + '</div>' +
+          '<div class="bubble-voice">' + (isPlaying ? '■ 正在播放 · 点击停止' : '🔊 ' + m.duration + '" 语音  点击播放') + '</div>' +
+          (m.text && !m.isLocalPreview ? '<div class="bubble-text">' + m.text + '</div>' : '');
+        btn.onclick = () => playMessage(m.id);
+        row.appendChild(btn);
+        list.appendChild(row);
+      });
+      list.scrollTop = list.scrollHeight;
+    }
+
+    function renderPopup() {
+      const unread = getUnreadList();
+      const latest = unread[unread.length - 1];
+      const show = Boolean(
+        latest &&
+        latest.id !== state.dismissedId &&
+        !state.alarmActive &&
+        $('settingsScreen').hidden &&
+        state.page !== 'chat'
+      );
+      $('msgPopup').hidden = !show;
+      if (!show) return;
+      const isPlaying = Boolean(state.playingId);
+      $('msgPopupTitle').textContent = latest.sender + '发来新消息';
+      $('msgPopupSub').textContent = (latest.text ? '“' + latest.text + '”' : latest.duration + '秒语音消息') + ' · 共 ' + unread.length + ' 条未读';
+      $('msgPlayBtn').className = 'msg-play-btn' + (isPlaying ? ' playing' : '');
+      $('msgPlayBtn').textContent = isPlaying ? '■ 播放中 · 点击停止' : '▶ 点击播放';
+      $('msgRing').className = 'msg-ring' + (isPlaying ? ' playing' : '');
+    }
+
+    function renderAll() {
+      $('homeView').hidden = state.page !== 'home';
+      $('aiView').hidden = state.page !== 'ai';
+      $('schedView').hidden = state.page !== 'sched';
+      $('chatView').hidden = state.page !== 'chat';
+      renderSchedules();
+      renderChat();
+      renderStatus();
+      renderPopup();
+    }
+
+    function switchPage(p) {
+      if (state.page === 'chat' && p !== 'chat') {
+        const unread = getUnreadList();
+        if (unread.length) state.dismissedId = unread[unread.length - 1].id;
+      }
+      if (state.page !== p && (p === 'ai' || p === 'chat') && !state.animating) {
+        state.statusText = '';
+        state.statusTone = '';
+        state.aiState = 'idle';
+      }
+      state.page = p;
+      renderAll();
+    }
+
+    function playMessage(id) {
+      if (state.playingId === id) {
+        clearTimeout(playTimer);
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        state.playingId = '';
+        setStatus('播放结束', 'is-ok', false, 2200);
+        renderAll();
+        return;
+      }
+      const msg = state.messages.find(m => m.id === id);
+      if (!msg) return;
+      clearTimeout(playTimer);
+      state.playingId = id;
+      setStatus('正在播放语音', '', true);
+      renderAll();
+      playTimer = speakText(msg.text || '宝贝，今天在学校开不开心呀', () => {
+        if (state.playingId !== id) return;
+        state.playingId = '';
+        msg.unread = false;
+        setStatus('播放结束', 'is-ok', false, 2500);
+        renderAll();
+      });
+    }
+
+    function startHold(target) {
+      if (state.alarmActive || state.holdingTarget) return;
+      state.holdingTarget = target;
+      if (target === 'ai') {
+        $('aiHoldBtn').classList.add('holding');
+        state.aiState = 'listening';
       } else {
-        tabWechat.classList.add('active');
-        tabAi.classList.remove('active');
-        avatarBox.textContent = unread ? '👩🔴' : '👩💬';
-        stateTitle.textContent = unread ? '妈妈发来 1 条未读语音' : '爸妈微聊 (已读)';
-        stateSub.textContent = '点击屏幕播放妈妈语音 · 按住发语音给妈妈';
+        $('chatHoldBtn').classList.add('holding');
+      }
+      setStatus('正在录音松开发送', '', true);
+    }
+
+    function runAiReply() {
+      state.canRetry = false;
+      state.aiState = 'thinking';
+      setStatus('正在思考请稍候', '', true);
+      setTimeout(() => {
+        state.aiState = 'speaking';
+        setStatus('正在播放语音', '', true);
+        speakText('太阳发光是因为内部发生核聚变，就像一个超级能量大火球！', () => {
+          state.aiState = 'idle';
+          setStatus('回答结束请继续提问', 'is-ok', false, 3000);
+        });
+      }, 900);
+    }
+
+    function endHold(target) {
+      if (state.holdingTarget !== target) return;
+      state.holdingTarget = '';
+      $('aiHoldBtn').classList.remove('holding');
+      $('chatHoldBtn').classList.remove('holding');
+      if (target === 'ai') {
+        runAiReply();
+      } else {
+        const now = new Date();
+        const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+        const msg = {
+          id: 'm_' + Date.now(),
+          fromParent: false,
+          sender: '宝贝',
+          time: hhmm,
+          duration: 3,
+          text: '妈妈，我已经写完作业啦！',
+          isLocalPreview: true,
+          unread: false,
+          sendState: 'sending',
+        };
+        state.canRetry = false;
+        state.messages.push(msg);
+        setStatus('正在发送语音 100%', '', true);
+        renderAll();
+        setTimeout(() => {
+          msg.sendState = 'sent';
+          setStatus('发送成功', 'is-ok', false, 2800);
+          renderAll();
+        }, 1200);
       }
     }
 
-    tabAi.onclick = () => { page = 'ai'; renderPage(); };
-    tabWechat.onclick = () => { page = 'wechat'; renderPage(); };
-    pwrBtn.onclick = () => { page = page === 'ai' ? 'wechat' : 'ai'; renderPage(); };
+    function retryOutgoing(id) {
+      const msg = state.messages.find(m => m.id === id);
+      if (!msg) return;
+      msg.sendState = 'sending';
+      setStatus('正在重试发送', '', true);
+      renderAll();
+      setTimeout(() => {
+        msg.sendState = 'sent';
+        setStatus('发送成功', 'is-ok', false, 2800);
+        renderAll();
+      }, 1000);
+    }
 
-    touchZone.onmousedown = () => {
-      avatarBox.classList.add('active');
-      if (page === 'ai') {
-        avatarBox.textContent = '🐶👂';
-        stateTitle.textContent = '正在倾听 (16kHz Opus + AEC)…';
-        stateSub.textContent = '松开手指立即发送至云端 AI';
-      } else {
-        unread = false;
-        unreadDot.style.display = 'none';
-        avatarBox.textContent = '🔊👩';
-        stateTitle.textContent = '正在播放妈妈的语音…';
-        stateSub.textContent = '“宝贝，放学回家先喝口温水哦！”';
-        speak('宝贝，放学回家先喝口温水哦！');
-      }
-    };
+    function triggerAlarm() {
+      const target = state.schedules.find(s => s.status === 'pending') || state.schedules[state.schedules.length - 1];
+      target.status = 'ringing';
+      state.alarmActive = true;
+      $('alarmTime').textContent = target.time;
+      $('alarmTitle').textContent = target.title;
+      $('alarmOverlay').hidden = false;
+      renderAll();
+      clearTimeout(alarmTimer);
+      alarmTimer = speakText('宝贝，' + target.title + '的时间到啦！', () => finishAlarm(target));
+    }
 
-    touchZone.onmouseup = () => {
-      avatarBox.classList.remove('active');
-      if (page === 'ai') {
-        avatarBox.textContent = '🐶💡';
-        stateTitle.textContent = '小铭同学正在开心回答…';
-        const reply = '哈哈！我是小铭同学，今天也要开开心心，有什么好玩的事快告诉我吧！';
-        stateSub.textContent = reply;
-        speak(reply);
-      } else {
-        renderPage();
-      }
-    };
-
-    bootBtn.onmousedown = () => {
-      avatarBox.classList.add('active');
-      avatarBox.textContent = '🎙️❤️';
-      stateTitle.textContent = '微聊专属对讲录音中…';
-      stateSub.textContent = '松开侧面按键立即发送给妈妈';
-    };
-
-    bootBtn.onmouseup = () => {
-      avatarBox.classList.remove('active');
-      avatarBox.textContent = '✅👩';
-      stateTitle.textContent = '已发送给妈妈！';
-      stateSub.textContent = '家长端 H5 将立即收到语音气泡';
-      setTimeout(renderPage, 1500);
-    };
-
-    document.getElementById('simRtcBtn').onclick = () => {
-      alarmModal.hidden = false;
-      speak('宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！');
-    };
-
-    alarmModal.onclick = () => {
-      alarmModal.hidden = true;
+    function finishAlarm(target) {
+      if (!state.alarmActive) return;
+      clearTimeout(alarmTimer);
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-      stateTitle.textContent = '已确认闹钟 (alarm_ack)';
-      stateSub.textContent = '已通过 MQTT 上报家长端：孩子已确认';
+      target.status = 'done';
+      state.alarmActive = false;
+      $('alarmOverlay').hidden = true;
+      renderAll();
+    }
+
+    // Wire UI
+    $('btnAiOpen').onclick = () => switchPage('ai');
+    $('aiBack').onclick = () => switchPage('home');
+    $('schedEntry').onclick = () => switchPage('sched');
+    $('schedBack').onclick = () => switchPage('home');
+    $('btnParentOpen').onclick = () => switchPage('chat');
+    $('chatBack').onclick = () => switchPage('home');
+    $('pwrBtn').onclick = () => switchPage('home');
+    $('chatRefreshBtn').onclick = () => setStatus('消息已刷新', 'is-ok', false, 2000);
+
+    $('aiHoldBtn').onmousedown = () => startHold('ai');
+    $('aiHoldBtn').onmouseup = () => endHold('ai');
+    $('aiHoldBtn').onmouseleave = () => endHold('ai');
+    $('bootBtn').onmousedown = () => { switchPage('ai'); startHold('ai'); };
+    $('bootBtn').onmouseup = () => endHold('ai');
+    $('bootBtn').onmouseleave = () => endHold('ai');
+
+    $('chatHoldBtn').onmousedown = () => startHold('parent');
+    $('chatHoldBtn').onmouseup = () => endHold('parent');
+    $('chatHoldBtn').onmouseleave = () => endHold('parent');
+    $('io18Btn').onmousedown = () => { switchPage('chat'); startHold('parent'); };
+    $('io18Btn').onmouseup = () => endHold('parent');
+    $('io18Btn').onmouseleave = () => endHold('parent');
+
+    $('alarmAckBtn').onclick = () => {
+      const target = state.schedules.find(s => s.status === 'ringing');
+      if (target) finishAlarm(target);
     };
 
-    document.getElementById('simParentMsgBtn').onclick = () => {
-      unread = true;
-      page = 'wechat';
-      renderPage();
-      speak('叮咚，妈妈发来一条新语音');
+    $('msgCloseBtn').onclick = () => {
+      const unread = getUnreadList();
+      if (unread.length) state.dismissedId = unread[unread.length - 1].id;
+      renderAll();
     };
+    $('msgPlayBtn').onclick = () => {
+      const unread = getUnreadList();
+      if (unread.length) playMessage(unread[unread.length - 1].id);
+    };
+
+    $('homeRetryBtn').onclick = runAiReply;
+    $('aiRetryBtn').onclick = runAiReply;
+    $('chatRetryBtn').onclick = runAiReply;
+
+    // Settings
+    $('settingsOpen').onclick = () => { $('settingsScreen').hidden = false; renderPopup(); };
+    $('settingsClose').onclick = () => { $('settingsScreen').hidden = true; renderPopup(); };
+    $('scanWifi').onclick = () => {
+      $('wifiSelect').replaceChildren(new Option('Home Wi-Fi', 'Home Wi-Fi'), new Option('Guest Wi-Fi', 'Guest Wi-Fi'));
+      $('wifiHint').textContent = '请选择 Wi-Fi';
+    };
+    $('connectWifi').onclick = () => {
+      if (!$('wifiSelect').value) { $('wifiHint').textContent = '请先扫描并选择网络'; return; }
+      $('wifiHint').textContent = '已连接 ' + $('wifiSelect').value;
+      $('wifiState').textContent = '📶 在线';
+    };
+
+    // Simulator triggers
+    $('simAlarmBtn').onclick = triggerAlarm;
+    $('simMsgBtn').onclick = () => {
+      const now = new Date();
+      const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      state.messages.push({ id: 'm_' + Date.now(), fromParent: true, sender: '妈妈', time: hhmm, duration: 4, text: '宝贝，晚饭想吃点什么呀？', unread: true });
+      renderAll();
+    };
+    $('simMultiMsgBtn').onclick = () => {
+      const now = new Date();
+      const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      state.messages.push(
+        { id: 'm_' + Date.now() + '_1', fromParent: true, sender: '爸爸', time: hhmm, duration: 3, text: '爸爸下班在路上了！', unread: true },
+        { id: 'm_' + Date.now() + '_2', fromParent: true, sender: '妈妈', time: hhmm, duration: 6, text: '记得先把水果吃掉哦', unread: true }
+      );
+      renderAll();
+    };
+    $('simFailBtn').onclick = () => {
+      const now = new Date();
+      const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      state.messages.push({
+        id: 'm_' + Date.now(),
+        fromParent: false,
+        sender: '宝贝',
+        time: hhmm,
+        duration: 4,
+        text: '妈妈我想吃草莓！',
+        isLocalPreview: true,
+        unread: false,
+        sendState: 'failed',
+      });
+      state.page = 'chat';
+      setStatus('发送失败可点击重试', 'is-err', false);
+      renderAll();
+    };
+    $('simAiFailBtn').onclick = () => {
+      state.page = 'ai';
+      state.aiState = 'idle';
+      state.canRetry = true;
+      setStatus('连接失败可重新发送', 'is-err', false);
+    };
+
+    // Live clock tick
+    function updateClock() {
+      const d = new Date();
+      const wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+      $('clockTime').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      $('clockDate').textContent = (d.getMonth() + 1) + '月' + d.getDate() + '日  ' + wk;
+    }
+    updateClock();
+    setInterval(updateClock, 15000);
+    renderAll();
   </script>
 </body>
 </html>

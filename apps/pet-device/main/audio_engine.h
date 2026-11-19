@@ -16,6 +16,9 @@ void audio_engine_end_hold(audio_target_t target);
 bool audio_engine_retry_last(void);
 bool audio_engine_has_pending(void);
 bool audio_engine_can_retry(void);
+bool audio_engine_can_retry_target(audio_target_t target);
+bool audio_engine_is_busy(void);
+void audio_engine_clear_pending_if_id(const char *msg_id);
 // Synchronous completion: ESP_OK only after decoded PCM reaches the speaker.
 esp_err_t audio_engine_play_buffer(const uint8_t *data, size_t len);
 esp_err_t audio_engine_play_file(const char *path);

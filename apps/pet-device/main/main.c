@@ -7,6 +7,7 @@
 #include "device_sync.h"
 #include "device_pairing.h"
 #include "device_storage.h"
+#include "chat_client.h"
 #include "hardware_keys.h"
 
 static const char *TAG = "ai_chat_pet_main";
@@ -17,6 +18,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(device_pairing_init());
     ESP_ERROR_CHECK(device_storage_init());
+    chat_client_init();
     audio_engine_init();
     ui_state_init();
     rtc_scheduler_init();

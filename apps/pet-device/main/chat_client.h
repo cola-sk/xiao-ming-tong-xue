@@ -9,6 +9,42 @@
 extern "C" {
 #endif
 
+#define CHAT_HISTORY_MAX 20
+
+typedef enum {
+    CHAT_SEND_SENT    = 0,
+    CHAT_SEND_SENDING = 1,
+    CHAT_SEND_FAILED  = 2,
+} chat_send_state_t;
+
+typedef struct {
+    char id[48];
+    char sender[32];
+    char text[160];
+    char audio_url[128];
+    char time_str[8];
+    char mime[24];
+    int duration_sec;
+    bool from_parent;
+    bool unread;
+    bool has_local_audio;
+    chat_send_state_t send_state;
+} chat_message_info_t;
+
+void chat_client_init(void);
+esp_err_t chat_client_fetch_history(void);
+bool chat_client_get_unread_info(chat_message_info_t *out, int *out_unread_count);
+int chat_client_get_history(chat_message_info_t *out, int max_items);
+uint32_t chat_client_get_version(void);
+bool chat_client_is_playing(void);
+bool chat_client_is_uploading(void);
+void chat_client_get_playing_id(char *out_id, size_t out_len);
+esp_err_t chat_client_play_message(const char *msg_id);
+void chat_client_add_local_outgoing(const char *msg_id, const uint8_t *audio, size_t audio_len,
+                                    const char *mime, int duration_sec);
+void chat_client_set_send_state(const char *msg_id, chat_send_state_t state);
+esp_err_t chat_client_retry_outgoing(const char *msg_id);
+
 /**
  * Ask the cloud AI pet brain (POST /api/v1/ai/chat with responseFormat="mp3"),
  * receive real-time Doubao TTS audio, and play it on ES8311 speaker.
