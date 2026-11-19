@@ -302,7 +302,9 @@ export const useAppStore = create<AppState>()(
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
         });
         if (!response.ok) throw new Error('保存定时任务失败');
-        set(s => ({ schedules: s.schedules.map(item => item.id === id ? merged : item) }));
+        const data = await response.json().catch(() => null);
+        const saved = data?.schedule ? { ...merged, ...data.schedule } : merged;
+        set(s => ({ schedules: s.schedules.map(item => item.id === id ? saved : item) }));
       },
 
       toggleSchedule: id => {
@@ -311,7 +313,12 @@ export const useAppStore = create<AppState>()(
           schedules: s.schedules.map(item => {
             if (item.id === id) {
               nextEnabled = !item.enabled;
-              return { ...item, enabled: nextEnabled };
+              return {
+                ...item,
+                enabled: nextEnabled,
+                lastAckStatus: nextEnabled ? 'idle' : item.lastAckStatus,
+                lastAckAt: nextEnabled ? null : item.lastAckAt,
+              };
             }
             return item;
           }),
@@ -320,7 +327,18 @@ export const useAppStore = create<AppState>()(
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, enabled: nextEnabled }),
-        }).catch(() => {});
+        })
+          .then(r => (r.ok ? r.json() : null))
+          .then(data => {
+            if (data?.schedule) {
+              set(s => ({
+                schedules: s.schedules.map(item =>
+                  item.id === id ? { ...item, ...data.schedule } : item
+                ),
+              }));
+            }
+          })
+          .catch(() => {});
       },
 
       deleteSchedule: id => {

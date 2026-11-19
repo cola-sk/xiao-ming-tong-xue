@@ -48,6 +48,7 @@ export interface VoiceScheduleRecord {
   lastAckStatus: 'idle' | 'ringing' | 'confirmed';
   lastAckAt: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ChatVoiceMessageRecord {
@@ -330,6 +331,7 @@ function mapScheduleRow(r: Record<string, unknown>): VoiceScheduleRecord {
         : 'idle',
     lastAckAt: r.last_ack_at ? new Date(String(r.last_ack_at)).toISOString() : null,
     createdAt: new Date(String(r.created_at)).toISOString(),
+    updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
   };
 }
 
@@ -373,13 +375,15 @@ export async function upsertVoiceSchedule(
       INSERT INTO voice_schedules (
         id, device_id, title, cron_expr, time_str, repeat_days, enabled,
         source_type, cloned_voice_id, cloned_speaker_role, text_content,
-        audio_url, audio_md5, repeat_play_count, require_ack, updated_at
+        audio_url, audio_md5, repeat_play_count, require_ack,
+        last_ack_status, last_ack_at, updated_at
       ) VALUES (
         ${id}, ${params.deviceId || 'default'}, ${params.title}, ${params.cronExpr},
         ${params.timeStr}, ${repeatDaysJson}::jsonb, ${params.enabled},
         ${params.sourceType}, ${params.clonedVoiceId || null}, ${params.clonedSpeakerRole || null},
         ${params.textContent}, ${safeAudioUrl}, ${params.audioMd5 || null},
-        ${params.repeatPlayCount}, ${Boolean(params.requireAck)}, NOW()
+        ${params.repeatPlayCount}, ${Boolean(params.requireAck)},
+        'idle', NULL, NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
         device_id = EXCLUDED.device_id,
@@ -396,6 +400,8 @@ export async function upsertVoiceSchedule(
         audio_md5 = COALESCE(EXCLUDED.audio_md5, voice_schedules.audio_md5),
         repeat_play_count = EXCLUDED.repeat_play_count,
         require_ack = EXCLUDED.require_ack,
+        last_ack_status = CASE WHEN EXCLUDED.enabled THEN 'idle' ELSE voice_schedules.last_ack_status END,
+        last_ack_at = CASE WHEN EXCLUDED.enabled THEN NULL ELSE voice_schedules.last_ack_at END,
         updated_at = NOW()
       RETURNING *
     `;
@@ -419,9 +425,10 @@ export async function upsertVoiceSchedule(
     audioMd5: params.audioMd5 ?? existing?.audioMd5 ?? null,
     repeatPlayCount: params.repeatPlayCount,
     requireAck: Boolean(params.requireAck),
-    lastAckStatus: existing?.lastAckStatus || 'idle',
-    lastAckAt: existing?.lastAckAt || null,
+    lastAckStatus: params.enabled ? 'idle' : existing?.lastAckStatus || 'idle',
+    lastAckAt: params.enabled ? null : existing?.lastAckAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
   memSchedules.set(id, record);
   return record;
@@ -434,11 +441,19 @@ export async function toggleVoiceSchedule(id: string, enabled?: boolean): Promis
     const rows =
       typeof enabled === 'boolean'
         ? await sql`
-            UPDATE voice_schedules SET enabled = ${enabled}, updated_at = NOW()
+            UPDATE voice_schedules
+            SET enabled = ${enabled},
+                last_ack_status = CASE WHEN ${enabled} THEN 'idle' ELSE last_ack_status END,
+                last_ack_at = CASE WHEN ${enabled} THEN NULL ELSE last_ack_at END,
+                updated_at = NOW()
             WHERE id = ${id} RETURNING *
           `
         : await sql`
-            UPDATE voice_schedules SET enabled = NOT enabled, updated_at = NOW()
+            UPDATE voice_schedules
+            SET enabled = NOT enabled,
+                last_ack_status = CASE WHEN NOT enabled THEN 'idle' ELSE last_ack_status END,
+                last_ack_at = CASE WHEN NOT enabled THEN NULL ELSE last_ack_at END,
+                updated_at = NOW()
             WHERE id = ${id} RETURNING *
           `;
     return rows.length > 0 ? mapScheduleRow(rows[0] as Record<string, unknown>) : null;
@@ -446,9 +461,13 @@ export async function toggleVoiceSchedule(id: string, enabled?: boolean): Promis
 
   const existing = memSchedules.get(id);
   if (!existing) return null;
+  const nextEnabled = typeof enabled === 'boolean' ? enabled : !existing.enabled;
   const updated = {
     ...existing,
-    enabled: typeof enabled === 'boolean' ? enabled : !existing.enabled,
+    enabled: nextEnabled,
+    lastAckStatus: nextEnabled ? ('idle' as const) : existing.lastAckStatus,
+    lastAckAt: nextEnabled ? null : existing.lastAckAt,
+    updatedAt: new Date().toISOString(),
   };
   memSchedules.set(id, updated);
   return updated;

@@ -146,6 +146,9 @@ export const ScheduleFormModal: React.FC<Props> = ({
           timeStr,
           repeatDays,
           cronExpr,
+          enabled: true,
+          lastAckStatus: 'idle',
+          lastAckAt: null,
           repeatPlayCount,
           requireAck,
         });

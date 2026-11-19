@@ -83,6 +83,10 @@ static void mark_fired(const pet_schedule_t *s, int32_t stamp) {
     nvs_handle_t h; char key[16]; schedule_key(s, key, 'f');
     if (nvs_open("pet_alarms", NVS_READWRITE, &h) == ESP_OK) { nvs_set_i32(h, key, stamp); nvs_commit(h); nvs_close(h); }
 }
+static void clear_fired(const pet_schedule_t *s) {
+    nvs_handle_t h; char key[16]; schedule_key(s, key, 'f');
+    if (nvs_open("pet_alarms", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
+}
 static bool md5_valid(const char *md5) {
     if (strlen(md5) != 32) return false;
     for (int i = 0; i < 32; i++) if (!((md5[i] >= '0' && md5[i] <= '9') || (md5[i] >= 'a' && md5[i] <= 'f') || (md5[i] >= 'A' && md5[i] <= 'F'))) return false;
@@ -136,6 +140,10 @@ static bool apply_json(const char *json, bool download) {
         cJSON *days = cJSON_GetObjectItem(item, "repeatDays"), *d;
         cJSON_ArrayForEach(d, days) if (cJSON_IsNumber(d) && d->valueint >= 1 && d->valueint <= 7) s->repeat_mask |= 1 << d->valueint;
         // Empty repeatDays means one shot, matching the parent UI.
+        if (download && s->repeat_mask == 0 && s->enabled &&
+            strcmp(str(item, "lastAckStatus"), "idle") == 0 && last_fired(s) != 0) {
+            clear_fired(s);
+        }
         ESP_LOGI(TAG, "Sched item id=%s %02u:%02u enabled=%d mask=0x%02x repeats=%u req_ack=%d md5=%s fired=%ld",
                  s->id, s->hour, s->minute, s->enabled, s->repeat_mask, s->repeat_play_count, s->require_ack, s->audio_md5, (long)last_fired(s));
         if (schedule_needs_audio(s)) {
@@ -264,7 +272,11 @@ static void rtc_monitor_task(void *arg) {
                     }
                 }
                 bool acked = atomic_exchange(&s_alarm_ack, false);
-                if (acked || (played && s->repeat_mask == 0)) save_ack(s_active.id);
+                if (acked || (played && s->repeat_mask == 0)) {
+                    if (!wifi_manager_is_connected() || device_sync_send_alarm_ack(s_active.id) != ESP_OK) {
+                        save_ack(s_active.id);
+                    }
+                }
                 if (played || acked) {
                     if (s->repeat_mask == 0) {
                         xSemaphoreTake(s_lock, portMAX_DELAY);
