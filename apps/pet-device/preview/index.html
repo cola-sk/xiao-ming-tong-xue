@@ -69,6 +69,15 @@
       color: #77786F;
       font-weight: 700;
     }
+    .status-bar { width: 100%; justify-content: flex-start; gap: 8px; padding-right: 48px; }
+    .settings-open { position: absolute; top: 10px; right: 12px; border: 0; border-radius: 12px; background: #3E493F; color: white; padding: 7px 9px; cursor: pointer; font-weight: 700; }
+    .settings-screen { position: absolute; inset: 0; z-index: 20; background: #24394f; color: white; padding: 20px; text-align: left; }
+    .settings-screen[hidden] { display: none; }
+    .settings-head { display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: bold; }
+    .settings-screen button, .settings-screen select, .settings-screen input { border: 0; border-radius: 8px; padding: 9px; font: inherit; }
+    .settings-screen button { cursor: pointer; }
+    .settings-screen select, .settings-screen input { display: block; width: 100%; margin-top: 10px; }
+    .settings-screen p { margin: 12px 0; font-size: 13px; }
     .badge-dot {
       display: inline-block;
       width: 7px;
@@ -189,10 +198,21 @@
 
     <main class="screen" data-resolution="480x480">
       <div class="status-bar">
-        <span>Wi-Fi · 小铭同学</span>
-        <span>·</span>
-        <span id="clockText">20:30 · 88%</span>
+        <span id="wifiState">Wi-Fi OK</span>
+        <span id="statusUnread">MSG</span>
+        <span>BAT 88%</span>
+        <button class="settings-open" id="settingsOpen" aria-label="打开设置">SET</button>
       </div>
+
+      <section class="settings-screen" id="settingsScreen" hidden>
+        <div class="settings-head"><span>Settings</span><button id="settingsClose" aria-label="关闭设置">✕</button></div>
+        <p>Volume 80% <span style="opacity:.7">（由家长端设置）</span></p>
+        <button id="scanWifi">Scan Wi-Fi</button>
+        <p id="wifiHint">模拟预览：扫描附近 Wi-Fi</p>
+        <select id="wifiSelect" aria-label="选择 Wi-Fi"><option value="">--</option></select>
+        <input id="wifiPassword" type="password" maxlength="63" placeholder="Wi-Fi password" aria-label="Wi-Fi 密码" />
+        <button id="connectWifi" style="margin-top:12px">Connect</button>
+      </section>
 
       <!-- 主触控区 -->
       <div class="page-area" id="touchZone">
@@ -245,6 +265,22 @@
     const pwrBtn = document.getElementById('pwrBtn');
     const alarmModal = document.getElementById('alarmModal');
 
+    const settingsScreen = document.getElementById('settingsScreen');
+    const wifiSelect = document.getElementById('wifiSelect');
+    const wifiHint = document.getElementById('wifiHint');
+    document.getElementById('settingsOpen').onclick = () => { settingsScreen.hidden = false; };
+    document.getElementById('settingsClose').onclick = () => { settingsScreen.hidden = true; };
+    document.getElementById('scanWifi').onclick = () => {
+      wifiSelect.replaceChildren(new Option('Home Wi-Fi（模拟）', 'Home Wi-Fi'), new Option('Guest Wi-Fi（模拟）', 'Guest Wi-Fi'));
+      wifiHint.textContent = '模拟预览：请选择网络';
+    };
+    document.getElementById('connectWifi').onclick = () => {
+      if (!wifiSelect.value) { wifiHint.textContent = '请先扫描并选择网络'; return; }
+      wifiHint.textContent = '模拟预览：已连接 ' + wifiSelect.value;
+      document.getElementById('wifiState').textContent = 'Wi-Fi OK';
+      document.getElementById('wifiPassword').value = '';
+    };
+
     function speak(text) {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -257,6 +293,7 @@
 
     function renderPage() {
       unreadDot.style.display = unread ? 'inline-block' : 'none';
+      document.getElementById('statusUnread').textContent = unread ? 'MSG' : '--';
       if (page === 'ai') {
         tabAi.classList.add('active');
         tabWechat.classList.remove('active');

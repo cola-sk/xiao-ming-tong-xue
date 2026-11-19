@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -40,3 +41,7 @@ void rtc_scheduler_sync_from_json(const char *schedules_json);
 #ifdef __cplusplus
 }
 #endif
+
+void rtc_scheduler_set_time(time_t epoch);
+void rtc_scheduler_ack_active(void);
+void rtc_scheduler_flush_acks(void);

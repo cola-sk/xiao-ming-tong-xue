@@ -40,6 +40,12 @@ esp_err_t chat_client_play_next_unread(void);
 esp_err_t chat_client_send_child_voice_wav(const uint8_t *wav_data, size_t wav_len,
                                            const char *asr_text, int duration_sec);
 
+esp_err_t chat_client_send_child_voice_audio(const uint8_t *audio, size_t audio_len,
+                                            const char *mime, const char *asr_text, int duration_sec);
+esp_err_t chat_client_send_child_recording(const char *message_id, const uint8_t *audio, size_t audio_len,
+                                          const char *mime, int duration_sec);
+esp_err_t chat_client_ask_ai_audio(const uint8_t *audio, size_t audio_len, const char *mime);
+
 /**
  * Convenience wrapper for sending text/metadata voice notification.
  */

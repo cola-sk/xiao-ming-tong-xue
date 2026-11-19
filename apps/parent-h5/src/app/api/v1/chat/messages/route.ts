@@ -4,6 +4,7 @@ import {
   listChatMessages,
   createChatMessage,
   markChatMessagePlayed,
+  ChatMessageConflictError,
 } from '@/server/appDataStore';
 
 export const dynamic = 'force-dynamic';
@@ -93,7 +94,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '发送微聊消息失败' },
-      { status: 500 }
+      { status: err instanceof ChatMessageConflictError ? 409 : 500 }
     );
   }
 }

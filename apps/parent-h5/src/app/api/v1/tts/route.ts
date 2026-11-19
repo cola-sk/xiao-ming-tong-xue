@@ -47,6 +47,12 @@ export async function POST(request: NextRequest) {
       persist,
     });
 
+    if (body.responseFormat === 'mp3') {
+      const audio = Buffer.from(result.audioBase64, 'base64');
+      return new NextResponse(new Uint8Array(audio), { headers: {
+        'Content-Type': 'audio/mpeg', 'Content-Length': String(audio.length), 'Cache-Control': 'no-store',
+      } });
+    }
     return NextResponse.json({
       status: 'ok',
       provider: 'volcengine-doubao-tts',

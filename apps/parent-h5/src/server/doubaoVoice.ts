@@ -85,6 +85,7 @@ async function synthesizeViaV3Unidirectional(params: {
   text: string;
   speaker: string;
   speedRatio?: number;
+  timeoutMs?: number;
 }): Promise<{ audioBuffer: Buffer; resourceId: string }> {
   const response = await fetch(`${VOLC_SPEECH_HOST}/api/v3/tts/unidirectional`, {
     method: 'POST',
@@ -108,6 +109,7 @@ async function synthesizeViaV3Unidirectional(params: {
       },
     }),
     cache: 'no-store',
+    signal: AbortSignal.timeout(params.timeoutMs || 30000),
   });
 
   const rawText = await response.text();
@@ -154,6 +156,7 @@ export async function synthesizeDoubaoTts(params: {
   isClonedVoice?: boolean;
   speedRatio?: number;
   persist?: boolean;
+  timeoutMs?: number;
 }) {
   const cfg = getDoubaoConfig();
   if (!cfg.apiKey) {
@@ -204,7 +207,9 @@ export async function synthesizeDoubaoTts(params: {
       );
 
   let lastError: Error | null = null;
+  const deadline = Date.now() + (params.timeoutMs || 60000);
   for (const resourceId of candidateResourceIds) {
+    if (Date.now() >= deadline) break;
     try {
       const { audioBuffer, resourceId: usedRes } = await synthesizeViaV3Unidirectional({
         apiKey: cfg.apiKey,
@@ -212,6 +217,7 @@ export async function synthesizeDoubaoTts(params: {
         text: params.text,
         speaker,
         speedRatio: params.speedRatio,
+        timeoutMs: Math.max(1, Math.min(params.timeoutMs || 30000, deadline - Date.now())),
       });
       const audioBase64 = audioBuffer.toString('base64');
       const audioMd5 = createHash('md5').update(audioBuffer).digest('hex');

@@ -1,9 +1,17 @@
 #include "rtc_scheduler.h"
+#include "schedule_rules.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "pet_http_auth.h"
@@ -11,217 +19,248 @@
 #include "cJSON.h"
 #include "wifi_manager.h"
 #include "ui_state_machine.h"
+#include "audio_engine.h"
+#include "audio_download.h"
+#include "device_storage.h"
+#include "device_sync.h"
+#include "bsp/esp-bsp.h"
+#include "driver/i2c_master.h"
+#include "nvs.h"
+#include "mbedtls/md5.h"
 
 static const char *TAG = "rtc_scheduler";
-
-#define SCHED_HTTP_BUF_SIZE 8192
-
 static pet_schedule_t s_schedules[MAX_SCHEDULES];
-static int s_schedule_count = 0;
+static int s_count;
+static SemaphoreHandle_t s_lock;
+static i2c_master_dev_handle_t s_rtc;
+static atomic_bool s_alarm_active, s_alarm_ack;
+static pet_schedule_t s_active;
+#ifdef PET_HARDWARE_SMOKE
+static atomic_int s_smoke_offset;
+#endif
+#define SCHEDULE_FILE PET_STORAGE_BASE "/schedules.json"
+#define SCHED_HTTP_BUF_SIZE 24576
 
-typedef struct {
-    char *buf;
-    int len;
-    int cap;
-} sched_resp_t;
-
-static esp_err_t sched_http_event_handler(esp_http_client_event_t *evt) {
-    sched_resp_t *ctx = (sched_resp_t *)evt->user_data;
-    if (evt->event_id == HTTP_EVENT_ON_DATA && ctx && evt->data_len > 0) {
-        int copy_len = evt->data_len;
-        if (ctx->len + copy_len >= ctx->cap) {
-            copy_len = ctx->cap - ctx->len - 1;
-        }
-        if (copy_len > 0) {
-            memcpy(ctx->buf + ctx->len, evt->data, copy_len);
-            ctx->len += copy_len;
-            ctx->buf[ctx->len] = '\0';
-        }
+static int bcd(uint8_t v) { return (v >> 4) * 10 + (v & 15); }
+static uint8_t to_bcd(int v) { return (v / 10) * 16 + v % 10; }
+static void rtc_hardware_init(void) {
+    i2c_device_config_t cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = 0x51, .scl_speed_hz = 100000 };
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, &s_rtc) != ESP_OK) return;
+    uint8_t reg = 4, bytes[7];
+    if (i2c_master_transmit_receive(s_rtc, &reg, 1, bytes, 7, 100) != ESP_OK || (bytes[0] & 0x80)) { ESP_LOGW(TAG, "RTC time invalid; waiting for server clock"); return; }
+    struct tm t = { .tm_sec = bcd(bytes[0] & 0x7f), .tm_min = bcd(bytes[1] & 0x7f), .tm_hour = bcd(bytes[2] & 0x3f),
+        .tm_mday = bcd(bytes[3] & 0x3f), .tm_mon = bcd(bytes[5] & 0x1f) - 1, .tm_year = 100 + bcd(bytes[6]), .tm_isdst = -1 };
+    if (t.tm_sec > 59 || t.tm_min > 59 || t.tm_hour > 23 || t.tm_mday < 1 || t.tm_mday > 31 || t.tm_mon < 0 || t.tm_mon > 11 || t.tm_year < 124 || t.tm_year > 199) {
+        ESP_LOGW(TAG, "RTC registers out of range; waiting for server clock"); return;
     }
-    return ESP_OK;
+    time_t epoch = mktime(&t);
+    if (epoch > 1700000000) { struct timeval tv = { .tv_sec = epoch }; settimeofday(&tv, NULL); ESP_LOGI(TAG, "Clock restored from PCF85063"); }
 }
-
-static esp_err_t prefetch_alarm_audio(const char *audio_url, const char *audio_md5) {
-    if (!audio_url || strlen(audio_url) == 0 || !audio_md5 || strlen(audio_md5) == 0) {
-        return ESP_OK;
+void rtc_scheduler_set_time(time_t epoch) {
+    if (epoch < 1700000000) return;
+    struct timeval tv = { .tv_sec = epoch }; settimeofday(&tv, NULL);
+    if (!s_rtc) return;
+    struct tm t; localtime_r(&epoch, &t);
+    uint8_t bytes[] = { 4, to_bcd(t.tm_sec), to_bcd(t.tm_min), to_bcd(t.tm_hour), to_bcd(t.tm_mday), to_bcd(t.tm_wday), to_bcd(t.tm_mon + 1), to_bcd(t.tm_year - 100) };
+    if (i2c_master_transmit(s_rtc, bytes, sizeof(bytes), 100) != ESP_OK) return;
+    uint8_t reg = 0, control;
+    if (i2c_master_transmit_receive(s_rtc, &reg, 1, &control, 1, 100) == ESP_OK) {
+        uint8_t run[] = { 0, control & ~0x22 }; i2c_master_transmit(s_rtc, run, sizeof(run), 100);
     }
-
-    char full_url[256];
-    if (strncmp(audio_url, "http", 4) == 0) {
-        snprintf(full_url, sizeof(full_url), "%s", audio_url);
-    } else {
-        snprintf(full_url, sizeof(full_url), "%s%s", CONFIG_PET_SERVER_URL, audio_url);
-    }
-
-    ESP_LOGI(TAG, "Verifying/downloading alarm MP3 (MD5=%s): %s", audio_md5, full_url);
-    esp_http_client_config_t cfg = {
-        .url = full_url,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .disable_auto_redirect = true,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    pet_http_add_auth(client, full_url);
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err == ESP_OK) {
-        int content_len = esp_http_client_fetch_headers(client);
-        int status = esp_http_client_get_status_code(client);
-        ESP_LOGI(TAG, "Cached alarm MP3 (%s) -> HTTP %d, size=%d bytes", audio_md5, status, content_len);
-        // NOTE: In production with mounted SPIFFS/SD, stream chunks directly to /sdcard/alarms/<md5>.mp3
-    } else {
-        ESP_LOGW(TAG, "Failed to download alarm MP3: %s", esp_err_to_name(err));
-    }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    return err;
 }
-
-void rtc_scheduler_sync_from_json(const char *schedules_json) {
-    if (!schedules_json) return;
-    cJSON *root = cJSON_Parse(schedules_json);
-    if (!root) {
-        ESP_LOGE(TAG, "Failed to parse schedules JSON");
-        return;
+static void schedule_key(const pet_schedule_t *s, char key[16], char prefix) {
+    char content[160]; snprintf(content, sizeof(content), "%s/%u:%u/%s", s->id, s->hour, s->minute, s->audio_md5);
+    unsigned char md5[16]; mbedtls_md5((unsigned char *)content, strlen(content), md5);
+    key[0] = prefix; for (int i = 0; i < 6; i++) snprintf(key + 1 + 2 * i, 3, "%02x", md5[i]);
+}
+static int32_t last_fired(const pet_schedule_t *s) {
+    nvs_handle_t h; int32_t value = 0; char key[16]; schedule_key(s, key, 'f');
+    if (nvs_open("pet_alarms", NVS_READONLY, &h) == ESP_OK) { nvs_get_i32(h, key, &value); nvs_close(h); } return value;
+}
+static void mark_fired(const pet_schedule_t *s, int32_t stamp) {
+    nvs_handle_t h; char key[16]; schedule_key(s, key, 'f');
+    if (nvs_open("pet_alarms", NVS_READWRITE, &h) == ESP_OK) { nvs_set_i32(h, key, stamp); nvs_commit(h); nvs_close(h); }
+}
+static bool md5_valid(const char *md5) {
+    if (strlen(md5) != 32) return false;
+    for (int i = 0; i < 32; i++) if (!((md5[i] >= '0' && md5[i] <= '9') || (md5[i] >= 'a' && md5[i] <= 'f') || (md5[i] >= 'A' && md5[i] <= 'F'))) return false;
+    return true;
+}
+static bool cache_path(const pet_schedule_t *s, char path[96]) {
+    if (!md5_valid(s->audio_md5)) return false;
+    snprintf(path, 96, PET_STORAGE_BASE "/alarms/%s.mp3", s->audio_md5); return true;
+}
+static const char *str(cJSON *obj, const char *name) { cJSON *v = cJSON_GetObjectItem(obj, name); return cJSON_IsString(v) ? v->valuestring : ""; }
+static void prune_audio_cache(const pet_schedule_t *items, int count) {
+    DIR *dir = opendir(PET_STORAGE_BASE); if (!dir) return;
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        const char *name = entry->d_name;
+        if (*name == '/') name++;
+        if (strncmp(name, "alarms/", 7) || strlen(name) != 43 || strcmp(name + 39, ".mp3")) continue;
+        bool keep = false;
+        for (int i = 0; i < count; i++) if (!strncasecmp(name + 7, items[i].audio_md5, 32)) { keep = true; break; }
+        if (!keep) { char path[128]; snprintf(path, sizeof(path), "%s/%.100s", PET_STORAGE_BASE, name); unlink(path); }
     }
-
+    closedir(dir);
+}
+static bool apply_json(const char *json, bool download) {
+    cJSON *root = cJSON_Parse(json); if (!root) return false;
     cJSON *arr = cJSON_GetObjectItem(root, "schedules");
-    if (!cJSON_IsArray(arr)) {
-        cJSON_Delete(root);
-        return;
-    }
-
-    int count = 0;
-    cJSON *item = NULL;
+    if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) > MAX_SCHEDULES) { cJSON_Delete(root); return false; }
+    pet_schedule_t *next = calloc(MAX_SCHEDULES, sizeof(*next)); if (!next) { cJSON_Delete(root); return false; }
+    int count = 0; bool complete = true;
+    cJSON *item;
     cJSON_ArrayForEach(item, arr) {
-        if (count >= MAX_SCHEDULES) break;
-        pet_schedule_t *dst = &s_schedules[count];
-        memset(dst, 0, sizeof(pet_schedule_t));
-        dst->last_triggered_yday = -1;
-        dst->last_triggered_min = -1;
-
-        cJSON *id = cJSON_GetObjectItem(item, "id");
-        cJSON *title = cJSON_GetObjectItem(item, "title");
-        cJSON *timeStr = cJSON_GetObjectItem(item, "timeStr");
-        cJSON *enabled = cJSON_GetObjectItem(item, "enabled");
-        cJSON *audioUrl = cJSON_GetObjectItem(item, "audioUrl");
-        cJSON *audioMd5 = cJSON_GetObjectItem(item, "audioMd5");
-        cJSON *repeatPlay = cJSON_GetObjectItem(item, "repeatPlayCount");
-        cJSON *repeatDays = cJSON_GetObjectItem(item, "repeatDays");
-
-        if (cJSON_IsString(id)) snprintf(dst->id, sizeof(dst->id), "%s", id->valuestring);
-        if (cJSON_IsString(title)) snprintf(dst->title, sizeof(dst->title), "%s", title->valuestring);
-        if (cJSON_IsString(timeStr)) {
-            int h = 0, m = 0;
-            if (sscanf(timeStr->valuestring, "%d:%d", &h, &m) == 2) {
-                dst->hour = (uint8_t)h;
-                dst->minute = (uint8_t)m;
-            }
+        int h, m;
+        if (!*str(item, "id") || strlen(str(item, "id")) >= sizeof(next[0].id) || sscanf(str(item, "timeStr"), "%d:%d", &h, &m) != 2 || h < 0 || h > 23 || m < 0 || m > 59) { complete = false; continue; }
+        pet_schedule_t *s = &next[count++];
+        snprintf(s->id, sizeof(s->id), "%s", str(item, "id")); snprintf(s->title, sizeof(s->title), "%s", str(item, "title"));
+        snprintf(s->audio_url, sizeof(s->audio_url), "%s", str(item, "audioUrl")); snprintf(s->audio_md5, sizeof(s->audio_md5), "%s", str(item, "audioMd5"));
+        s->hour = h; s->minute = m; s->enabled = cJSON_IsTrue(cJSON_GetObjectItem(item, "enabled"));
+        cJSON *repeat = cJSON_GetObjectItem(item, "repeatPlayCount"); int repeats = cJSON_IsNumber(repeat) ? repeat->valueint : 2;
+        s->repeat_play_count = repeats < 1 ? 1 : repeats > 5 ? 5 : repeats;
+        cJSON *days = cJSON_GetObjectItem(item, "repeatDays"), *d;
+        cJSON_ArrayForEach(d, days) if (cJSON_IsNumber(d) && d->valueint >= 1 && d->valueint <= 7) s->repeat_mask |= 1 << d->valueint;
+        // Empty repeatDays means one shot, matching the parent UI.
+        if (s->enabled) {
+            char path[96];
+            if (!cache_path(s, path)) complete = false;
+            else if (download && audio_download_file(s->audio_url, path, s->audio_md5) != ESP_OK) complete = false;
+            else if (!download && !audio_cache_valid(path, s->audio_md5)) s->enabled = false;
         }
-        dst->enabled = cJSON_IsBool(enabled) ? cJSON_IsTrue(enabled) : true;
-        if (cJSON_IsString(audioUrl)) snprintf(dst->audio_url, sizeof(dst->audio_url), "%s", audioUrl->valuestring);
-        if (cJSON_IsString(audioMd5)) snprintf(dst->audio_md5, sizeof(dst->audio_md5), "%s", audioMd5->valuestring);
-        dst->repeat_play_count = cJSON_IsNumber(repeatPlay) ? (uint8_t)repeatPlay->valueint : 2;
-
-        uint8_t mask = 0;
-        if (cJSON_IsArray(repeatDays)) {
-            cJSON *d = NULL;
-            cJSON_ArrayForEach(d, repeatDays) {
-                if (cJSON_IsNumber(d) && d->valueint >= 1 && d->valueint <= 7) {
-                    mask |= (1 << d->valueint);
-                }
-            }
-        }
-        dst->repeat_mask = mask ? mask : 0xFE;
-
-        if (dst->enabled && strlen(dst->audio_url) > 0) {
-            prefetch_alarm_audio(dst->audio_url, dst->audio_md5);
-        }
-        count++;
     }
-
-    s_schedule_count = count;
-    ESP_LOGI(TAG, "Synced %d voice schedules into PCF85063 RTC table", s_schedule_count);
-    cJSON_Delete(root);
+    xSemaphoreTake(s_lock, portMAX_DELAY); memcpy(s_schedules, next, MAX_SCHEDULES * sizeof(*next)); s_count = count; xSemaphoreGive(s_lock);
+    if (download && complete) prune_audio_cache(next, count);
+    free(next); cJSON_Delete(root); return complete;
 }
-
+void rtc_scheduler_sync_from_json(const char *json) { if (json) apply_json(json, true); }
+typedef struct { char *buf; int used; bool overflow; } response_t;
+static esp_err_t http_event(esp_http_client_event_t *evt) {
+    response_t *r = evt->user_data;
+    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
+        if (r->used + evt->data_len >= SCHED_HTTP_BUF_SIZE) r->overflow = true;
+        else { memcpy(r->buf + r->used, evt->data, evt->data_len); r->used += evt->data_len; r->buf[r->used] = 0; }
+    } return ESP_OK;
+}
 esp_err_t rtc_scheduler_fetch_and_sync(void) {
     if (!wifi_manager_is_connected() || !device_pairing_is_paired()) return ESP_ERR_INVALID_STATE;
-
-    char url[256];
-    snprintf(url, sizeof(url), "%s/api/v1/schedules?deviceId=%s",
-             CONFIG_PET_SERVER_URL, wifi_manager_get_device_id());
-
-    char *buf = calloc(1, SCHED_HTTP_BUF_SIZE);
-    if (!buf) return ESP_ERR_NO_MEM;
-
-    sched_resp_t ctx = {.buf = buf, .len = 0, .cap = SCHED_HTTP_BUF_SIZE};
-    esp_http_client_config_t cfg = {
-        .url = url,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .disable_auto_redirect = true,
-        .event_handler = sched_http_event_handler,
-        .user_data = &ctx,
-    };
-
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    pet_http_add_auth(client, url);
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200 && ctx.len > 0) {
-        cJSON *root = cJSON_Parse(ctx.buf);
-        if (!root || !cJSON_IsArray(cJSON_GetObjectItem(root, "schedules"))) {
-            err = ESP_FAIL;
-        } else {
-            rtc_scheduler_sync_from_json(ctx.buf);
-        }
-        cJSON_Delete(root);
-    } else {
-        ESP_LOGW(TAG, "Schedule sync HTTP err=%s", esp_err_to_name(err));
-        err = ESP_FAIL;
-    }
-
-    esp_http_client_cleanup(client);
-    free(buf);
-    return err;
+    response_t r = { .buf = calloc(1, SCHED_HTTP_BUF_SIZE) }; if (!r.buf) return ESP_ERR_NO_MEM;
+    char url[256]; snprintf(url, sizeof(url), "%s/api/v1/schedules?deviceId=%s", CONFIG_PET_SERVER_URL, wifi_manager_get_device_id());
+    esp_http_client_config_t cfg = { .url = url, .timeout_ms = 10000, .crt_bundle_attach = esp_crt_bundle_attach,
+        .disable_auto_redirect = true, .addr_type = HTTP_ADDR_TYPE_INET, .event_handler = http_event, .user_data = &r };
+    esp_http_client_handle_t c = pet_http_init(&cfg); if (!c) { free(r.buf); return ESP_ERR_NO_MEM; }
+    pet_http_add_auth(c, url); esp_err_t err = pet_http_perform(c);
+    int status = esp_http_client_get_status_code(c); esp_http_client_cleanup(c);
+    if (err == ESP_OK && status == 200 && !r.overflow && r.used) {
+        // Persist the complete task list, even if an audio download must retry.
+        cJSON *j = cJSON_Parse(r.buf); bool valid = j && cJSON_IsArray(cJSON_GetObjectItem(j, "schedules")); cJSON_Delete(j);
+        if (valid) {
+            FILE *f = fopen(SCHEDULE_FILE ".tmp", "wb");
+            if (f) { bool ok = fwrite(r.buf, 1, r.used, f) == r.used; if (fclose(f)) ok = false; if (ok) rename(SCHEDULE_FILE ".tmp", SCHEDULE_FILE); }
+            err = apply_json(r.buf, true) ? ESP_OK : ESP_FAIL;
+        } else err = ESP_FAIL;
+    } else err = ESP_FAIL;
+    free(r.buf); return err;
 }
-
+void rtc_scheduler_ack_active(void) {
+    if (atomic_load(&s_alarm_active)) { atomic_store(&s_alarm_ack, true); audio_engine_stop_playback(); }
+}
+static void save_ack(const char *id) {
+    nvs_handle_t h; if (nvs_open("pet_alarms", NVS_READWRITE, &h) != ESP_OK) return;
+    // One displayed reminder at a time. Queue multiple offline confirmations in NVS.
+    for (int i = 0; i < 16; i++) { char key[12], prior[48]; size_t len = sizeof(prior); snprintf(key, sizeof(key), "ack%d", i);
+        if (nvs_get_str(h, key, prior, &len) != ESP_OK) { nvs_set_str(h, key, id); break; }
+        if (!strcmp(prior, id)) break;
+    } nvs_commit(h); nvs_close(h);
+}
+void rtc_scheduler_flush_acks(void) {
+    for (int i = 0; i < 16 && wifi_manager_is_connected(); i++) {
+        nvs_handle_t h; char key[12], id[48]; size_t len = sizeof(id); snprintf(key, sizeof(key), "ack%d", i);
+        if (nvs_open("pet_alarms", NVS_READWRITE, &h) != ESP_OK) return;
+        esp_err_t err = nvs_get_str(h, key, id, &len); nvs_close(h);
+        if (err == ESP_OK && device_sync_send_alarm_ack(id) == ESP_OK && nvs_open("pet_alarms", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_key(h, key); nvs_commit(h); nvs_close(h);
+        }
+    }
+}
 static void rtc_monitor_task(void *arg) {
-    // Set China Standard Time (CST-8) for localtime matching
-    setenv("TZ", "CST-8", 1);
-    tzset();
-
     while (1) {
+        if (atomic_load(&s_alarm_active)) {
+            if (atomic_exchange(&s_alarm_ack, false)) { save_ack(s_active.id); atomic_store(&s_alarm_active, false); ui_hide_alarm_modal(); }
+            vTaskDelay(pdMS_TO_TICKS(200)); continue;
+        }
         time_t now = time(NULL);
+#ifdef PET_HARDWARE_SMOKE
+        now += atomic_load(&s_smoke_offset);
+#endif
+        struct tm t; localtime_r(&now, &t);
         if (now > 1700000000) {
-            struct tm tm_now;
-            localtime_r(&now, &tm_now);
-            // Convert tm_wday (0=Sun..6=Sat) -> 1=Mon..7=Sun
-            int iso_wday = tm_now.tm_wday == 0 ? 7 : tm_now.tm_wday;
-            int cur_min_of_day = tm_now.tm_hour * 60 + tm_now.tm_min;
-
-            for (int i = 0; i < s_schedule_count; i++) {
-                pet_schedule_t *s = &s_schedules[i];
-                if (!s->enabled) continue;
-                if ((s->repeat_mask & (1 << iso_wday)) == 0) continue;
-                if (tm_now.tm_hour == s->hour && tm_now.tm_min == s->minute) {
-                    if (s->last_triggered_yday != tm_now.tm_yday || s->last_triggered_min != cur_min_of_day) {
-                        s->last_triggered_yday = tm_now.tm_yday;
-                        s->last_triggered_min = cur_min_of_day;
-                        char local_path[96];
-                        snprintf(local_path, sizeof(local_path), "/sdcard/alarms/%s.mp3",
-                                 strlen(s->audio_md5) ? s->audio_md5 : s->id);
-                        ui_trigger_alarm_modal(s->id, s->title, local_path);
-                    }
+            int32_t stamp = schedule_date_stamp(&t);
+            pet_schedule_t candidates[MAX_SCHEDULES]; int count;
+            xSemaphoreTake(s_lock, portMAX_DELAY); count = s_count; memcpy(candidates, s_schedules, sizeof(candidates)); xSemaphoreGive(s_lock);
+            for (int i = 0; i < count; i++) {
+                pet_schedule_t *s = &candidates[i];
+                if (!schedule_is_due(s->enabled, s->hour, s->minute, s->repeat_mask, &t, last_fired(s))) continue;
+                char path[96]; struct stat cached;
+                // MD5 is checked on download/load; avoid re-reading the entire file at its due time.
+                if (!cache_path(s, path) || stat(path, &cached) || cached.st_size <= 0 || cached.st_size > 1024 * 1024) continue;
+                s_active = *s; atomic_store(&s_alarm_ack, false); atomic_store(&s_alarm_active, true);
+                ESP_LOGI(TAG, "Alarm due id=%s repeats=%u", s->id, s->repeat_play_count);
+                ui_trigger_alarm_modal(s->id, s->title, path);
+                bool played = false;
+                for (int n = 0; n < s->repeat_play_count && !atomic_load(&s_alarm_ack); n++) {
+                    esp_err_t err = audio_engine_play_file(path);
+                    if (err != ESP_OK) break;
+                    played = true;
+                    vTaskDelay(pdMS_TO_TICKS(300));
                 }
+                if (played || atomic_load(&s_alarm_ack)) { mark_fired(s, stamp); ESP_LOGI(TAG, "Alarm played id=%s", s->id); }
+                else { atomic_store(&s_alarm_active, false); ui_hide_alarm_modal(); }
+                break;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
 void rtc_scheduler_init(void) {
-    ESP_LOGI(TAG, "PCF85063 hardware RTC & local audio cache manager initialized");
-    xTaskCreate(rtc_monitor_task, "rtc_monitor_task", 4096, NULL, 4, NULL);
+    s_lock = xSemaphoreCreateMutex(); setenv("TZ", "CST-8", 1); tzset(); rtc_hardware_init();
+    FILE *f = fopen(SCHEDULE_FILE, "rb");
+    if (f) { char *buf = calloc(1, SCHED_HTTP_BUF_SIZE); if (buf) { size_t n = fread(buf, 1, SCHED_HTTP_BUF_SIZE - 1, f); if (n && !ferror(f) && feof(f)) apply_json(buf, false); free(buf); } fclose(f); }
+    xTaskCreate(rtc_monitor_task, "rtc_monitor", 12288, NULL, 4, NULL);
+    ESP_LOGI(TAG, "RTC scheduler ready: %d cached tasks", s_count);
 }
+
+#ifdef PET_HARDWARE_SMOKE
+bool rtc_scheduler_smoke_alarm(const char *md5) {
+    if (wifi_manager_is_connected()) return false;
+    pet_schedule_t *backup = malloc(sizeof(s_schedules)); if (!backup) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int backup_count = s_count; memcpy(backup, s_schedules, sizeof(s_schedules));
+    time_t now = time(NULL), target = now + 60 - now % 60;
+    struct tm t; localtime_r(&target, &t);
+    pet_schedule_t test = { .enabled = true, .hour = t.tm_hour, .minute = t.tm_min, .repeat_play_count = 1 };
+    snprintf(test.id, sizeof(test.id), "hardware_smoke_alarm"); snprintf(test.audio_md5, sizeof(test.audio_md5), "%s", md5);
+    nvs_handle_t initial; char fired_key[16]; schedule_key(&test, fired_key, 'f');
+    if (nvs_open("pet_alarms", NVS_READWRITE, &initial) == ESP_OK) { nvs_erase_key(initial, fired_key); nvs_commit(initial); nvs_close(initial); }
+    s_schedules[0] = test; s_count = 1; atomic_store(&s_smoke_offset, target - now - 2);
+    xSemaphoreGive(s_lock);
+    bool ok = false;
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(35000);
+    while ((int32_t)(deadline - xTaskGetTickCount()) > 0) {
+        if (last_fired(&test) == schedule_date_stamp(&t)) { ok = true; break; }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    rtc_scheduler_ack_active(); vTaskDelay(pdMS_TO_TICKS(1000));
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_count == 1 && !strcmp(s_schedules[0].id, test.id)) { memcpy(s_schedules, backup, sizeof(s_schedules)); s_count = backup_count; }
+    atomic_store(&s_smoke_offset, 0); xSemaphoreGive(s_lock); free(backup);
+    nvs_handle_t h; if (nvs_open("pet_alarms", NVS_READWRITE, &h) == ESP_OK) {
+        char key[16]; schedule_key(&test, key, 'f'); nvs_erase_key(h, key);
+        for (int i = 0; i < 16; i++) { char id[48]; size_t len = sizeof(id); snprintf(key, sizeof(key), "ack%d", i);
+            if (nvs_get_str(h, key, id, &len) == ESP_OK && !strcmp(id, test.id)) nvs_erase_key(h, key);
+        } nvs_commit(h); nvs_close(h);
+    }
+    return ok;
+}
+#endif

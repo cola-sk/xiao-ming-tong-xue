@@ -1,4 +1,5 @@
 #include "device_pairing.h"
+#include "pet_http_auth.h"
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -57,14 +58,19 @@ static int pairing_request(const char *action, cJSON **result) {
     esp_http_client_config_t cfg = {
         .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 25000,
         .crt_bundle_attach = esp_crt_bundle_attach, .disable_auto_redirect = true,
+        .addr_type = HTTP_ADDR_TYPE_INET,
         .event_handler = response_event, .user_data = &response,
     };
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    esp_http_client_handle_t client = pet_http_init(&cfg);
     if (!client) { cJSON_free(payload); return -1; }
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, payload, strlen(payload));
     esp_err_t err = esp_http_client_perform(client);
-    int status = err == ESP_OK ? esp_http_client_get_status_code(client) : -1;
+    pet_http_note_result(client, err);
+    int status = esp_http_client_get_status_code(client);
+    // ESP-IDF returns ESP_ERR_NOT_SUPPORTED for a JSON 401 without a Basic/Digest
+    // challenge. Preserve that response so an unpaired device can request a code.
+    if (err != ESP_OK && status != 401) status = -1;
     if (status == 200) *result = cJSON_Parse(response.data);
     esp_http_client_cleanup(client); cJSON_free(payload);
     ESP_LOGI(TAG, "Pairing %s -> HTTP %d", action, status);

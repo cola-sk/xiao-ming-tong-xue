@@ -9,6 +9,8 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
+#include "lwip/netdb.h"
+#include "lwip/inet.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -16,6 +18,7 @@ static const char *TAG = "wifi_manager";
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static bool s_is_connected = false;
+static bool s_switching = false;
 static char s_device_id[32] = {0};
 static char s_mac_str[20] = {0};
 
@@ -26,8 +29,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_is_connected = false;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-        ESP_LOGW(TAG, "Wi-Fi disconnected, retrying connection...");
-        esp_wifi_connect();
+        wifi_event_sta_disconnected_t *event = event_data;
+        ESP_LOGW(TAG, "Wi-Fi disconnected reason=%u; reconnecting", event ? event->reason : 0);
+        if (!s_switching) esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -65,12 +69,15 @@ esp_err_t wifi_manager_init(void) {
         IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
     wifi_config_t wifi_config = {0};
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
+    if (!wifi_config.sta.ssid[0]) {
     strncpy((char *)wifi_config.sta.ssid, CONFIG_PET_WIFI_SSID, sizeof(wifi_config.sta.ssid) - 1);
     strncpy((char *)wifi_config.sta.password, CONFIG_PET_WIFI_PASSWORD, sizeof(wifi_config.sta.password) - 1);
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;
@@ -92,6 +99,27 @@ bool wifi_manager_is_connected(void) {
     return s_is_connected;
 }
 
+void wifi_manager_log_server_address(void) {
+    const char *start = strstr(CONFIG_PET_SERVER_URL, "://");
+    if (!start) return;
+    start += 3;
+    size_t len = strcspn(start, "/:");
+    char host[128];
+    if (!len || len >= sizeof(host)) return;
+    memcpy(host, start, len); host[len] = 0;
+    struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+    struct addrinfo *addresses = NULL;
+    int err = getaddrinfo(host, "443", &hints, &addresses);
+    if (err || !addresses) { ESP_LOGW(TAG, "Server DNS lookup failed: %d", err); return; }
+    for (struct addrinfo *item = addresses; item; item = item->ai_next) {
+        char address[INET_ADDRSTRLEN];
+        const struct sockaddr_in *peer = (const struct sockaddr_in *)item->ai_addr;
+        if (inet_ntop(AF_INET, &peer->sin_addr, address, sizeof(address)))
+            ESP_LOGI(TAG, "Server IPv4: %s -> %s:443", host, address);
+    }
+    freeaddrinfo(addresses);
+}
+
 int wifi_manager_get_rssi(void) {
     if (!s_is_connected) return -127;
     wifi_ap_record_t ap_info;
@@ -107,4 +135,44 @@ const char *wifi_manager_get_device_id(void) {
 
 const char *wifi_manager_get_mac_str(void) {
     return s_mac_str;
+}
+
+// Run from a worker task: scanning and connection may take several seconds.
+esp_err_t wifi_manager_scan(wifi_ap_record_t *records, uint16_t *count) {
+    wifi_scan_config_t scan = { .show_hidden = false };
+    esp_err_t err = esp_wifi_scan_start(&scan, true);
+    if (err != ESP_OK) return err;
+    return esp_wifi_scan_get_ap_records(count, records);
+}
+
+esp_err_t wifi_manager_connect(const char *ssid, const char *password) {
+    size_t slen = strlen(ssid), plen = strlen(password);
+    if (!slen || slen > 32 || plen > 63 || (plen && plen < 8)) return ESP_ERR_INVALID_ARG;
+    wifi_config_t old = {0}, next = {0};
+    esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &old);
+    if (err != ESP_OK) return err;
+    memcpy(next.sta.ssid, ssid, slen);
+    memcpy(next.sta.password, password, plen);
+    next.sta.threshold.authmode = plen ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    s_switching = true;
+    esp_wifi_disconnect();
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    s_is_connected = false;
+    // Keep the previous credentials in flash until the new connection succeeds.
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &next);
+    if (err == ESP_OK) err = esp_wifi_connect();
+    if (err == ESP_OK && !wifi_manager_wait_connected(15000)) err = ESP_ERR_TIMEOUT;
+    if (err == ESP_OK) {
+        esp_err_t save = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+        if (save == ESP_OK) save = esp_wifi_set_config(WIFI_IF_STA, &next);
+        if (save != ESP_OK) err = save;
+    } else {
+        esp_wifi_disconnect();
+        esp_wifi_set_config(WIFI_IF_STA, &old);
+        esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+        esp_wifi_connect();
+    }
+    s_switching = false;
+    return err;
 }

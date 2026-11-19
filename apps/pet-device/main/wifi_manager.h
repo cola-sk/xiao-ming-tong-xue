@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "esp_wifi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +23,7 @@ bool wifi_manager_wait_connected(uint32_t timeout_ms);
  * Return true if Wi-Fi currently has an active IP connection.
  */
 bool wifi_manager_is_connected(void);
+void wifi_manager_log_server_address(void);
 
 /**
  * Get the current Wi-Fi RSSI in dBm (returns -127 if disconnected).
@@ -41,3 +43,6 @@ const char *wifi_manager_get_mac_str(void);
 #ifdef __cplusplus
 }
 #endif
+
+esp_err_t wifi_manager_scan(wifi_ap_record_t *records, uint16_t *count);
+esp_err_t wifi_manager_connect(const char *ssid, const char *password);

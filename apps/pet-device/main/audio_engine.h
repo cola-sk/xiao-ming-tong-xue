@@ -1,16 +1,21 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include "esp_err.h"
 
-/**
- * 音频录放引擎接口 (ES7210 双麦阵列录音 + ES8311 音频解码播报 + Opus 编解码)
- */
+typedef enum { AUDIO_TARGET_AI, AUDIO_TARGET_PARENT } audio_target_t;
 void audio_engine_init(void);
-void audio_engine_start_capture_stream(const char *ws_url);
-void audio_engine_start_capture_file(const char *file_path);
-void audio_engine_stop_capture(void);
-void audio_engine_play_local_file(const char *file_path);
-void audio_engine_stop_playback(void);
 void audio_engine_set_volume(uint8_t volume_percent);
-bool audio_engine_start_self_test(void);
-bool audio_engine_start_voice_message(void);
+uint8_t audio_engine_get_volume(void);
+void audio_engine_stop_playback(void);
+// Press starts up to 15 seconds of mono 16 kHz capture; release encodes and sends.
+bool audio_engine_start_hold(audio_target_t target);
+void audio_engine_end_hold(audio_target_t target);
+// Retry uses the retained audio and stable message ID; no microphone capture.
+bool audio_engine_retry_last(void);
+bool audio_engine_has_pending(void);
+bool audio_engine_can_retry(void);
+// Synchronous completion: ESP_OK only after decoded PCM reaches the speaker.
+esp_err_t audio_engine_play_buffer(const uint8_t *data, size_t len);
+esp_err_t audio_engine_play_file(const char *path);

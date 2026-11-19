@@ -6,7 +6,7 @@
  * 微雪 ESP32-S3-Touch-AMOLED-2.16 (480x480) 界面与交互状态机
  * 1. PAGE_AI_PET: 主页 AI 伴聊 (按住触摸屏录音 -> 云端 ASR/LLM/TTS -> 播报)
  * 2. PAGE_WECHAT: 副页 爸妈微聊 (收听家长语音 / 按住屏幕或侧面按键发微信语音)
- * 3. MODAL_ALARM: 全局弹窗 定时语音提醒 (PCF85063 硬件 RTC 唤醒 -> 点击屏幕确认 alarm_ack)
+ * 3. MODAL_ALARM: 全局弹窗 定时语音提醒 (PCF85063 校时与本地定时巡检 -> 点击屏幕确认 alarm_ack)
  */
 
 typedef enum {
@@ -31,3 +31,8 @@ void ui_trigger_alarm_modal(const char *task_id, const char *title, const char *
 void ui_ack_alarm_modal(void);
 void ui_set_voice_status(const char *status);
 void ui_set_pairing_status(const char *code, const char *status);
+
+void ui_hide_alarm_modal(void);
+
+// Returns -1 when the PMU battery reading is unavailable.
+int ui_get_battery_percent(void);

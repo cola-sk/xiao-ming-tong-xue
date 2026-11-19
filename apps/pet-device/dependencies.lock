@@ -23,6 +23,16 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/esp_audio_codec:
+    component_hash: a5b9275af74247e3ce536d16a7080e4d77207a185b63e1bea368eb4d57176c2b
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.6.2
   espressif/esp_codec_dev:
     component_hash: df70f10af8d7b922add7b9d07372c9c97ab356e58d72b7a892050227c2d44348
     dependencies:
@@ -366,8 +376,9 @@ dependencies:
       type: service
     version: 2.0.0
 direct_dependencies:
+- espressif/esp_audio_codec
 - lvgl/lvgl
 - waveshare/esp32_s3_touch_amoled_2_16
-manifest_hash: 71935a4f8fd3cb2fb2e52b3369ec37a4840ed491da7905468d12edb99c603f5c
+manifest_hash: 44e15be0f17606183fd58dfc5c08313dfe9c3b5f9b500ad03e933e2d9a30e621
 target: esp32s3
 version: 2.0.0

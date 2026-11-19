@@ -538,6 +538,8 @@ export async function listChatMessages(params?: {
 
 const memTransientAudio = new Map<string, { base64: string; mimeType: string }>();
 
+export class ChatMessageConflictError extends Error {}
+
 export async function createChatMessage(params: {
   id?: string;
   deviceId?: string;
@@ -571,7 +573,7 @@ export async function createChatMessage(params: {
   const sql = getNeonSql();
   if (sql) {
     await ensureNeonSchema();
-    await sql`
+    const rows = await sql`
       INSERT INTO chat_voice_messages (
         id, device_id, direction, sender_name, audio_url,
         pending_audio_base64, pending_audio_mime,
@@ -580,9 +582,20 @@ export async function createChatMessage(params: {
         ${record.id}, ${record.deviceId}, ${record.direction}, ${record.senderName},
         ${record.audioUrl}, ${hasTransientAudio ? params.audioBase64! : null}, ${hasTransientAudio ? mime : null},
         ${record.durationSec}, ${record.asrText}, ${record.autoPlay}, ${record.status}
-      )
+      ) ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+        WHERE chat_voice_messages.device_id = EXCLUDED.device_id
+          AND chat_voice_messages.direction = EXCLUDED.direction
+      RETURNING id, device_id, direction, sender_name, audio_url, duration_sec,
+                asr_text, auto_play, status, created_at
     `;
+    if (!rows.length) throw new ChatMessageConflictError('消息编号已被其他设备使用');
+    return mapChatMsgRow(rows[0] as Record<string, unknown>);
   } else {
+    const prior = memChatMessages.get(record.id);
+    if (prior) {
+      if (prior.deviceId !== record.deviceId || prior.direction !== record.direction) throw new ChatMessageConflictError('消息编号已被其他设备使用');
+      return prior;
+    }
     memChatMessages.set(record.id, record);
     if (hasTransientAudio) {
       memTransientAudio.set(record.id, { base64: params.audioBase64!, mimeType: mime });

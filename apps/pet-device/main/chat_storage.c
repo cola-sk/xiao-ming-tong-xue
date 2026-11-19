@@ -1,4 +1,5 @@
 #include "chat_storage.h"
+#include "device_storage.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -8,7 +9,7 @@
 
 static const char *TAG = "chat_storage";
 
-#define WECHAT_DIR_BASE "/sdcard/wechat"
+#define WECHAT_DIR_BASE PET_STORAGE_BASE "/wechat"
 #define MAX_INDEX_ENTRIES 256
 
 typedef struct {

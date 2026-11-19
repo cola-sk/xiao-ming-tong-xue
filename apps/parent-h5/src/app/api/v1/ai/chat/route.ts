@@ -1,7 +1,10 @@
+import { transcribeDeviceAudio, SpeechRecognitionError } from '@/server/speechRecognition';
 import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import { isDoubaoConfigured, synthesizeDoubaoTts } from '@/server/doubaoVoice';
 import { getPetAiConfig, appendAiChatLog } from '@/server/appDataStore';
+
+export const maxDuration = 60;
 
 /**
  * 清理回答中的 Emoji 和特殊符号，确保传给豆包语音 2.0 合成时发音自然流畅
@@ -24,7 +27,12 @@ export async function POST(request: NextRequest) {
   const deviceId: string = String(body.deviceId || 'default');
   const access = await deviceAccess(request, deviceId);
   if (access.error) return access.error;
-  const question: string = (body.question || '你好呀').trim();
+  let question = typeof body.question === 'string' ? body.question.trim().slice(0, 2000) : '';
+  if (body.audioBase64 !== undefined) {
+    try { question = await transcribeDeviceAudio(String(body.audioBase64), String(body.audioMime || 'audio/wav')); }
+    catch (err) { return NextResponse.json({ error: err instanceof Error ? err.message : '语音识别失败' }, { status: err instanceof SpeechRecognitionError ? err.status : 502 }); }
+  }
+  if (!question) return NextResponse.json({ error: '请说一句话或输入问题' }, { status: 400 });
   const savedConfig = await getPetAiConfig(deviceId);
 
   const petName: string = body.petName || savedConfig.petName || '小铭同学';
@@ -52,11 +60,14 @@ export async function POST(request: NextRequest) {
       )
     : [process.env.LLM_MODEL || 'deepseek-chat'];
 
+  if (!apiKey) return NextResponse.json({ error: '服务端尚未配置 AI 对话' }, { status: 503 });
   let reply = '';
   let llmProvider = 'local-fallback';
 
+  const llmDeadline = Date.now() + 20000;
   if (apiKey) {
     for (const model of candidateModels) {
+      if (Date.now() >= llmDeadline) break;
       try {
         const response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -79,6 +90,7 @@ export async function POST(request: NextRequest) {
             temperature: 0.7,
           }),
           cache: 'no-store',
+          signal: AbortSignal.timeout(Math.max(1, Math.min(12000, llmDeadline - Date.now()))),
         });
 
         if (response.ok) {
@@ -96,12 +108,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (!reply) {
-    reply = `哇，你问的「${question.slice(
-      0,
-      14
-    )}」真是个超棒的问题！我是${petName}，最喜欢陪堂堂和正正一起探索奇妙世界啦！`;
-  }
+  if (!reply) return NextResponse.json({ error: 'AI 暂时无法回答，请重试' }, { status: 502 });
 
   // 1) 仅将纯文本问答写入 ai_chat_logs 表（不存音频）
   const log = await appendAiChatLog({
@@ -121,6 +128,7 @@ export async function POST(request: NextRequest) {
         voiceType,
         isClonedVoice: voiceType.startsWith('S_'),
         persist: false,
+        timeoutMs: 15000,
       });
       audioDataUrl = ttsResult.audioDataUrl;
       audioBase64 = ttsResult.audioBase64;
@@ -128,6 +136,8 @@ export async function POST(request: NextRequest) {
       console.error('Doubao TTS synthesis in /api/v1/ai/chat failed:', err);
     }
   }
+
+  if (body.responseFormat === 'mp3' && !audioBase64) return NextResponse.json({ error: '语音回复合成失败，请重试' }, { status: 502 });
 
   // 若 ESP32 请求直接返回 MP3 二进制流
   if (body.responseFormat === 'mp3' && audioBase64) {
@@ -138,6 +148,8 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'audio/mpeg',
         'Content-Length': String(mp3Buf.length),
         'X-Pet-Reply': encodeURIComponent(reply),
+        'X-Pet-Question': encodeURIComponent(question),
+        'Cache-Control': 'no-store',
       },
     });
   }
@@ -147,6 +159,7 @@ export async function POST(request: NextRequest) {
     provider: llmProvider,
     arkConfigured: Boolean(arkApiKey),
     reply,
+    question,
     audioDataUrl,
     logId: log?.id,
   });

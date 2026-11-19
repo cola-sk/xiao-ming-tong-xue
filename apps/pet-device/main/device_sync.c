@@ -13,6 +13,8 @@
 #include "audio_engine.h"
 #include "rtc_scheduler.h"
 #include "chat_client.h"
+#include "ui_state_machine.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "device_sync";
 
@@ -42,22 +44,13 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-static int read_battery_percent_axp2101(void) {
-    // AXP2101 I2C PMU register read hook on Waveshare board
-    return 100;
-}
-
 static void apply_server_config(const char *resp_json) {
     cJSON *root = cJSON_Parse(resp_json);
     if (!root) return;
 
     cJSON *epoch = cJSON_GetObjectItem(root, "serverEpochSec");
     if (cJSON_IsNumber(epoch) && epoch->valuedouble > 1700000000) {
-        struct timeval tv = {
-            .tv_sec = (time_t)epoch->valuedouble,
-            .tv_usec = 0,
-        };
-        settimeofday(&tv, NULL);
+        rtc_scheduler_set_time((time_t)epoch->valuedouble);
     }
 
     cJSON *cfg = cJSON_GetObjectItem(root, "config");
@@ -94,7 +87,8 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
     cJSON_AddStringToObject(body, "deviceId", wifi_manager_get_device_id());
     cJSON_AddStringToObject(body, "macAddress", wifi_manager_get_mac_str());
     cJSON_AddStringToObject(body, "firmwareVersion", FIRMWARE_VERSION);
-    cJSON_AddNumberToObject(body, "batteryPercent", read_battery_percent_axp2101());
+    int battery = ui_get_battery_percent();
+    if (battery >= 0) cJSON_AddNumberToObject(body, "batteryPercent", battery);
     cJSON_AddNumberToObject(body, "wifiRssi", wifi_manager_get_rssi());
     cJSON_AddStringToObject(body, "event", event_name ? event_name : "heartbeat");
     if (extra_key && extra_val) {
@@ -115,30 +109,31 @@ static esp_err_t post_sync_payload(const char *event_name, const char *extra_key
         .timeout_ms = 25000,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = true,
+        .addr_type = HTTP_ADDR_TYPE_INET,
         .event_handler = http_event_handler,
         .user_data = &resp_ctx,
     };
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_handle_t client = pet_http_init(&config);
     pet_http_add_auth(client, url);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = pet_http_perform(client);
     if (err == ESP_OK) {
         int status = esp_http_client_get_status_code(client);
         device_pairing_handle_status(status);
         ESP_LOGI(TAG, "Sync [%s] -> HTTP %d", event_name ? event_name : "heartbeat", status);
         if (status < 200 || status >= 300) err = ESP_FAIL;
-        if (status == 200 && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) {
-            apply_server_config(resp_ctx.buf);
-        }
+
     } else {
         ESP_LOGE(TAG, "HTTPS sync failed: %s", esp_err_to_name(err));
     }
 
+    // Release TLS buffers before fetching config-dependent audio or schedules.
     esp_http_client_cleanup(client);
     cJSON_free(post_data);
+    if (err == ESP_OK && resp_ctx.len > 0 && strcmp(event_name, "heartbeat") == 0) apply_server_config(resp_ctx.buf);
     return err;
 }
 
@@ -157,9 +152,12 @@ esp_err_t device_sync_send_voice_read(const char *msg_id) {
 static void device_sync_task(void *arg) {
     ESP_LOGI(TAG, "Waiting for Wi-Fi connection before starting heartbeat...");
     wifi_manager_wait_connected(portMAX_DELAY);
+    wifi_manager_log_server_address();
 
     while (1) {
         device_sync_send_event("heartbeat");
+        rtc_scheduler_flush_acks();
+        ESP_LOGI(TAG, "Sync resources: stack_free=%u internal_heap=%u", (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         vTaskDelay(pdMS_TO_TICKS(CONFIG_PET_HEARTBEAT_INTERVAL_SEC * 1000));
     }
 }
@@ -168,7 +166,7 @@ esp_err_t device_sync_start(void) {
     BaseType_t ok = xTaskCreate(
         device_sync_task,
         "device_sync_task",
-        6144,
+        16384,
         NULL,
         5,
         NULL

@@ -1,321 +1,310 @@
-# 「小铭同学」（AI Chat Pet）—— 智能语音宠物全栈技术方案
+# 小铭同学 · AI Chat Pet
 
-> 当前运行路径使用 HTTPS 轮询同步；下文涉及 EMQX/MQTT 实时通知的描述为旧方案，代码中已停用。设备音频驱动尚未实现播放完成确认，因此设备暂不会将语音标记为已读或删除云端音频。目前提供单家庭家长登录与绑定码配对，每台设备使用独立令牌；没有多家庭身份隔离，也没有内置分布式登录限流，不适合直接面向公众开放。
+基于微雪 **ESP32-S3-Touch-AMOLED-2.16** 的语音宠物：家长端微聊、按住问 AI、定时语音提醒。仓库包含 Next.js 家长 H5/API、ESP-IDF 固件和共享类型。
 
-**「小铭同学」** 是基于 **微雪（Waveshare）`ESP32-S3-Touch-AMOLED-2.16`**（2.16 寸 480×480 方形 AMOLED 屏、`CO5300` + `CST9220` 触控、`ES7210` 双麦硬件 AEC、`ES8311` 扬声器、`PCF85063` 硬件 RTC）打造的儿童智能陪伴与亲子双向微聊全栈系统。
+本文按 **2026-11-19 的实际实现与联调结果**整理；产品原始规划见 [产品方案](docs/esp32-ai-pet-solution.md)。规划中的 MQTT、TF 卡历史语音库、关机唤醒等能力，不代表当前固件已经启用。
 
-原始产品需求文档见 [docs/esp32-ai-pet-solution.md](docs/esp32-ai-pet-solution.md)。
+## 1. 当前状态与使用方式
 
----
+| 功能 | 当前实现 | 验证情况 / 边界 |
+| --- | --- | --- |
+| 屏幕与触摸 | 480×480 双页界面、中文字体、按住录音、松开发送 | 实机确认可切换页面；已收到 GPIO0、GPIO18 的按下/松开日志 |
+| 设备绑定 | 8 位绑定码；家长批准后领取设备独立 Token，存入 NVS | 已验证绑定、重启保留、解绑撤销及权限隔离 |
+| 发给家长 | 16 kHz 录音 → AAC → HTTPS 上传 | 录音回放及历史上传成功已验证；外网建连仍有间歇失败 |
+| 失败重发 | 保留最近一条录音；“重新发送”沿用原音频和消息 ID | SPIFFS 写入/恢复自检通过；服务端并发去重及已读后重试通过真实 PostgreSQL 验证 |
+| AI 语音聊天 | Ogg Opus → ASR → LLM → MP3 回复 → 设备解码 | 云端完整链路、设备编码与 MP3 播放分别通过；设备到云端的完整问答仍受建连不稳定影响，不能标为已稳定跑通 |
+| 定时播报 | 日程与音频落盘、RTC 校时、开机状态下离线触发、点击确认 | 实机离线触发和播放自检通过；星期、单次任务、跨年和重启去重规则测试通过 |
+| 消息同步 | HTTPS 心跳轮询 | 当前未启动 MQTT；不是毫秒级推送 |
 
-## 一、系统总体技术架构
+看**设备背面，USB 接口朝下**，三个按键从左到右：
 
-系统由 **家长 H5、ESP32-S3 固件、Vercel Serverless API、Neon PostgreSQL 和火山引擎 AI 服务**组成。下图按业务入口展开，箭头表示主要请求及数据去向；设备端尚未完成的部分见图后的说明。
+| 位置 | 丝印 / GPIO | 功能 |
+| --- | --- | --- |
+| 左 | IO18 / GPIO18 | 按住给家长录音，松开发送 |
+| 中 | PWR | 保留电源功能 |
+| 右 | BOOT / GPIO0 | 按住问 AI，松开发送问题 |
 
-```mermaid
-flowchart LR
-    subgraph Clients["终端"]
-        direction TB
-        H5["家长端 H5 · Next.js PWA<br/>微聊 / 日程 / 人设 / 声音复刻"]
-        IDB[("IndexedDB<br/>本地微聊音频")]
-        ESP["ESP32-S3 · ESP-IDF<br/>交互 / 心跳 / 消息 / 本地调度"]
-        Local[("设备本地存储<br/>微聊 WAV / 日程音频（规划）")]
-        H5 --- IDB
-        ESP --- Local
-    end
+![按键位置：设备背面，USB 接口朝下](docs/hardware-buttons.png)
 
-    subgraph API["Vercel · Next.js Serverless API /api/v1"]
-        direction TB
-        Sync["设备同步<br/>device/sync · device/status"]
-        Chat["亲子微聊<br/>chat/messages · 消息音频"]
-        Pet["AI 伴聊与人设<br/>ai/chat · pet-ai"]
-        Schedule["定时任务<br/>schedules · audio/[md5]"]
-        Voice["语音服务<br/>tts · voice-clone"]
-    end
+屏幕两个页面也有对应的按住按钮。录音范围为 **300 毫秒～15 秒**；轻点按键可能只录到 0.1～0.2 秒，出现“录音太短”属于正常保护。新录音会替换上一条待发录音；失败后可以直接重发，无需再说一遍。
 
-    subgraph Data["Neon PostgreSQL"]
-        direction TB
-        Meta[("设备 / 人设 / 日程<br/>复刻档案 / 问答文本")]
-        Queue[("chat_voice_messages<br/>未读音频临时中转<br/>已读后清空音频")]
-        Audio[("tts_audio_files<br/>定时 MP3 · MD5 去重")]
-    end
+定时任务需先同步并下载音频，之后保持设备开机即可断网播放。点“知道了”停止提醒并确认；离线确认保存后等待联网补报。**未实现关机或深睡眠状态下的 RTC 唤醒。**
 
-    subgraph External["外部云能力 (火山引擎 + EMQX)"]
-        direction TB
-        EMQX["EMQX Cloud Serverless\nmqtts :8883 / wss :8084<br/>REST :8443 Publish"]
-        Ark["火山方舟 LLM\n文本问答"]
-        Speech["豆包语音 V3\nTTS · 声音复刻"]
-    end
+## 2. 代码入口
 
-    H5 -->|"HTTPS · 管理与语音收发"| Sync & Chat & Pet & Schedule & Voice
-    H5 <-->|"WSS · 毫秒级新语音/确认提醒"| EMQX
-    ESP -->|"HTTPS · 心跳与事件"| Sync
-    ESP <-->|"MQTTs · <0.3s 唤醒推送"| EMQX
-    ESP -->|"HTTPS · 微聊收发"| Chat
-    ESP -->|"HTTPS · 文本提问"| Pet
-    ESP -->|"HTTPS · 日程与音频拉取"| Schedule
-    ESP -->|"HTTPS · 文本消息 TTS"| Voice
+| 位置 | 作用 |
+| --- | --- |
+| `apps/parent-h5` | Next.js 14 家长界面、API、鉴权、数据库及火山服务调用 |
+| `packages/contracts` | 跨端 TypeScript 类型与人设常量 |
+| `apps/pet-device/main/main.c` | 固件初始化入口 |
+| `main/ui_state_machine.c`、`hardware_keys.c` | 触摸、页面、重发入口、实体键防抖和按下/松开事件 |
+| `main/pet_display.c` | 沿用微雪屏幕及触摸方向，限制显示传输块，避免 DMA 内存不足 |
+| `main/audio_engine.c`、`voice_encoder.c` | 录音、编码、持久待发队列、实际解码播放 |
+| `main/chat_client.c`、`pet_http_route.c` | 语音 HTTP 请求、DNS 地址切换及分阶段日志 |
+| `main/device_pairing.c`、`device_sync.c` | 绑定凭据、心跳、音量、校时及确认事件 |
+| `main/device_storage.c`、`rtc_scheduler.c` | SPIFFS、日程缓存、PCF85063、离线调度及确认队列 |
+| `main/pet_font.c` | 编译进固件的中文字体子集 |
+| `apps/parent-h5/src/server/speechRecognition.ts` | 豆包极速 ASR 与音频格式校验 |
+| `src/server/doubaoVoice.ts`、`appDataStore.ts` | TTS / 声音复刻，日程、微聊、人设和文本日志 |
 
-    Sync & Chat & Schedule -->|"REST Publish"| EMQX
-    Sync <--> Meta
-    Sync -->|"未读数"| Queue
-    Chat <--> Queue
-    Pet <--> Meta
-    Schedule <--> Meta
-    Schedule -->|"读取 MP3"| Audio
-    Voice -->|"持久化定时 MP3"| Audio
-    Voice <--> Meta
-    Pet -->|"人设 + 问题"| Ark
-    Pet -->|"回复文本合成 MP3"| Speech
-    Voice -->|"文字合成 / 样本上传"| Speech
-```
+表内 `main/...` 相对 `apps/pet-device`；`src/...` 相对 `apps/parent-h5`。`mqtt_client_mgr.c` 和 `chat_storage.c` 保留旧方案代码，但当前主流程未启用 MQTT 或旧历史缓存索引。
 
-三条主要业务链路：
+## 3. 家长端开发与部署
 
-1. **亲子微聊**：H5 与设备通过消息 API 收发语音；Neon 暂存未读音频，接收端保存并确认后清除云端音频。
-2. **AI 伴聊**：设备向 `ai/chat` 发送文本问题，服务端读取人设、调用方舟生成回复，再调用豆包语音合成；问答文本存库，回复音频不持久化。
-3. **定时播报**：H5 调用 `tts` 生成并持久化音频，再保存日程；设备通过心跳检查日程数量、拉取任务及音频，计划在本地定时播放并上报确认。
+### 环境变量
 
-> **实现状态**：上图展示当前方案及已有 API 链路，并非设备端功能均已跑通。固件的录音、播放和界面硬件驱动目前主要为占位实现；AI 接口接收文本，语音识别尚未接入。日程音频下载尚未落盘，PCF85063 硬件 RTC 及离线唤醒尚未接入；当前使用系统时间轮询，且仅在启用日程数量变化时重新拉取。设备文件系统挂载及重启后的缓存索引恢复也有待实现。下文设备交互、离线播报及音频存储的描述为目标方案，需以代码实现状态为准。
-
-### 通信协议选型说明
-
-* **混合通信协议（EMQX Serverless MQTT 实时唤醒 + Vercel HTTPS 数据传输）**：
-  * **控制面（实时唤醒 `< 0.3s`）**：接入 **EMQX Cloud Serverless** 免费托管集群：
-    * **Vercel 后端**：不维护 TCP 长连，而是通过 EMQX REST API（`POST https://<host>:8443/api/v5/publish`，HTTP Basic Auth）毫秒级下发轻量信令。
-    * **ESP32 设备端**（[mqtt_client_mgr.c](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/pet-device/main/mqtt_client_mgr.c)）：通过原生 `esp-mqtt` 常连 `mqtts://<host>:8883` 订阅 `pet/{deviceId}/notify`，收到 `new_voice_msg` / `schedules_updated` / `config_updated` 后立刻拉取处理。
-    * **家长端 H5**（[useMqttParentSync.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/utils/useMqttParentSync.ts)）：通过 `wss://<host>:8084/mqtt` 订阅 `pet/{deviceId}/parent`，实时接收孩子新语音及闹钟确认事件。
-  * **数据面与兜底心跳（HTTPS REST）**：
-    * WAV/MP3 音频流、定时日程 JSON、心跳保活与状态确认继续走 Vercel HTTPS REST API（`POST /api/v1/device/sync`，开启 MQTT 后心跳可设为 30~60s 省电保活；未配置 EMQX 时自动降级为轮询同步，零单点故障）。
-
----
-
-## 二、核心业务与双向语音技术方案
-
-### 2.1 家长与设备双向发送语音技术方案（亲子微聊）
-
-系统支持 **「按住录制真声（WAV）」** 与 **「输入文字实时转语音（TTS）」** 两种发送方式，兼顾**原声保真传输**与**数据库零冗余存储（阅后即焚）**：
-
-1. **端侧音频编码格式统一为 24kHz 单声道 WAV**：
-   * 家长端 H5 使用 Web Audio API（[wavRecorder.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/utils/wavRecorder.ts)）直接录制标准 PCM WAV，彻底规避了 iOS Safari 不兼容 `audio/webm`、以及 ESP32 端缺乏 WebM/Opus 复杂解复用器的问题。
-   * ESP32 设备端通过 `ES7210` 采集 PCM 封装 WAV 头后（[chat_client.c](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/pet-device/main/chat_client.c)），Base64 编码上传。
-2. **「云端阅后即焚中转 + 端侧本地持久存储」机制**：
-   * 录音消息上传至 `POST /api/v1/chat/messages` 时，音频仅在 `unread` 期间暂存于 Neon `chat_voice_messages.pending_audio_base64`，并生成临时拉取地址 `/api/v1/chat/messages/{id}/audio`。
-   * 一旦接收方拉取音频并落盘到**各自端侧本地存储**，随即上报已读确认（ESP32 发 `voice_read` / 家长端调 `PATCH /api/v1/chat/messages`），服务端**立即将 `pending_audio_base64` 置 `NULL` 销毁**，云端不长期囤积聊天录音。
-   * 若家长发送的是纯文字消息（未录音），则完全不经过临时音频队列，ESP32 收到后直接调用 `/api/v1/tts`（`persist: false`）实时合成语音播放。
-3. **端侧本地存储选型与容量淘汰方案**：
-
-| 端侧 | 存储介质与技术选型 | 容量与淘汰策略（明确选型） | 选型依据 |
-| :--- | :--- | :--- | :--- |
-| **家长端 H5** | **浏览器 `IndexedDB`**<br>([chatAudioDb.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/utils/chatAudioDb.ts)) | • 上限：**最多 200 条** 且 **总大小 ≤ 100 MB**<br>• 按时间戳升序 LRU 淘汰最旧一条，支持界面一键清理 | `localStorage` 仅 5MB 上限会迅速溢出；`IndexedDB` 原生支持大容量 `Blob` 异步读写，云端清理后家长仍可在历史气泡中随时重听自己与孩子的原声。 |
-| **ESP32-S3 设备** | **TF 卡 (`/sdcard/wechat`) 或板载 Flash (`/littlefs/wechat`)**<br>([chat_storage.c](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/pet-device/main/chat_storage.c)) | **「体积上限 + 条数上限 + 过期天数」三重约束 FIFO**：<br>• **无 TF 卡（Flash 分区）**：`4 MB` · `20 条` · `7 天`<br>• **有 TF 卡（推荐）**：`128 MB` · `200 条` · `30 天`<br>• **目录隔离**：与定时提醒 `/alarms/` 分区隔离，互不挤占 | 单纯“按天”会在高频说话时写满 Flash；单纯“按条数”无法防单条超长录音爆盘。**体积 + 条数 + 天数三重约束（写入前先清过期，再循环踢出最旧 WAV）** 最稳妥，参数均可在 `idf.py menuconfig` 直接调节。 |
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Parent as 家长 (H5 + IndexedDB)
-    participant API as Vercel API + Neon DB
-    participant MQTT as EMQX Cloud Serverless
-    participant Device as ESP32-S3 (+ Flash/TF)
-    actor Child as 孩子
-
-    rect rgb(245, 248, 245)
-        Note over Parent,Child: 方向 A：家长发语音给设备 (<0.3s MQTT 唤醒)
-        Parent->>Parent: 按住说话 -> wavRecorder 录制 24kHz WAV<br/>并立即存入家长端 IndexedDB
-        Parent->>API: POST /api/v1/chat/messages (audioBase64 + autoPlay)
-        API-->>API: 写入未读消息，暂存 pending_audio_base64
-        API->>MQTT: HTTPS :8443 /api/v5/publish -> pet/{id}/notify
-        MQTT-->>Device: MQTTs :8883 毫秒级唤醒 (event="new_voice_msg")
-        Device->>API: GET /api/v1/chat/messages?status=unread
-        Device->>API: GET /api/v1/chat/messages/{id}/audio
-        Device->>Device: chat_storage_save() 按三重配额落盘本地 WAV
-        alt auto_play = true
-            Device->>Child: 亮屏并立即外放家长原声
-        else auto_play = false
-            Device->>Child: 响提示音+亮红点 -> 孩子点击播放本地缓存
-        end
-        Device->>API: 上报 event="voice_read" (msgId)
-        API-->>API: status="played" 并置 NULL 销毁云端中转音频
-    end
-
-    rect rgb(252, 246, 242)
-        Note over Parent,Child: 方向 B：孩子发语音给家长 (<0.5s WSS 提醒)
-        Child->>Device: 按住副页触摸屏或侧面 GPIO0 实体键说话
-        Device->>Device: chat_storage_save() 本地保存 + Base64 编码
-        Device->>API: POST /api/v1/chat/messages (device_to_parent)
-        API-->>API: 写入未读消息并暂存 pending_audio_base64
-        API->>MQTT: HTTPS :8443 /api/v5/publish -> pet/{id}/parent
-        MQTT-->>Parent: WSS :8084/mqtt 实时弹窗并刷新未读气泡
-        Parent->>API: 点击气泡 GET /api/v1/chat/messages/{id}/audio
-        Parent->>Parent: 存入本地 IndexedDB 并播放宝贝原声
-        Parent->>API: 调 PATCH /api/v1/chat/messages 标为已读
-        API-->>API: status="played" 并置 NULL 销毁云端中转音频
-    end
-```
-
----
-
-### 2.2 AI 宠物伴聊实时语音方案
-
-* **文本存库、音频流即播即弃（`persist: false`）**：
-  1. 孩子按住 ESP32 主页触摸屏说话，提问经 `/api/v1/ai/chat` 送入火山方舟大模型（`doubao-seed-2-0-mini-260428`），结合设备绑定的 `pet_ai_configs` 人设 Prompt 生成 50 字内口语化回复。
-  2. 纯文本问答对自动写入 `ai_chat_logs` 供家长查看；同时服务端立即调用豆包语音 V3（`seed-tts-2.0`）合成为 MP3 流（当 `responseFormat="mp3"` 时直接返回二进制流给 ESP32 播放），音频不写入数据库。
-
----
-
-### 2.3 定时语音播报与爸妈声音复刻方案
-
-1. **声音复刻（`seed-icl-2.0`）**：
-   * 家长在 H5 录制或上传 WAV/MP3 样本（本项目限制 3 MiB），填写火山引擎控制台已开通的预付费 `S_` 音色 ID；后端通过 [声音复刻 V3 API](https://docs.volcengine.com/docs/doubao-voice/sound-replica-api-v3?lang=zh) 上传并查询训练状态。仅训练成功或已激活的音色可用于合成。
-2. **定时音频永久地址 + 硬件 RTC 离线响铃**：
-   * 新建/编辑定时提醒时开启 `persist: true`，服务端将豆包合成的 MP3 按 `(voiceType + text)` 计算 MD5 存入 Neon `tts_audio_files`，生成永久地址 `/api/v1/audio/{md5}`（Edge CDN 缓存 1 年）。
-   * ESP32 在心跳检测到日程变化后，调用 `GET /api/v1/schedules` 拉取 JSON 并静默预下载 MP3；由本地时间监控与 `PCF85063` 硬件 RTC 在指定 `HH:MM` 与星期掩码下准点触发响铃，孩子点击屏幕停止后上送 `alarm_ack` 更新任务确认时间。
-
----
-
-## 三、分层音频存储与数据库表设计
-
-| 数据表 | 存储类型 | 用途与生命周期 |
-| :--- | :--- | :--- |
-| `devices` | 结构化元数据 | 设备绑定信息、MAC、固件版本、电量、`wifi_rssi`、`last_seen_at`（60s 在线判定） |
-| `pet_ai_configs` | 结构化元数据 | 按设备存储宠物昵称、人设模板、TTS 音色 ID、Prompt 与音量 |
-| `ai_chat_logs` | 纯文本日志 | 记录孩子提问与宠物回答文本（**不存音频**） |
-| `voice_clone_profiles` | 结构化元数据 | 爸妈复刻音色档案及对应的 `S_xxx` Speaker ID |
-| `voice_schedules` | 结构化元数据 | 定时规则、文案、`audio_url`、MD5 及孩子点击确认状态 `last_ack_status` |
-| `tts_audio_files` | **永久音频库** | **仅存放定时播报 MP3**（Base64 + MD5 去重），支撑 `/api/v1/audio/[md5]` |
-| `chat_voice_messages` | **元数据 + 阅后即焚队列** | 消息元数据持久保留；`pending_audio_base64` 仅在 `unread` 期间暂存，已读后立刻清空 |
-
-> 所有表由 [neonDb.ts](file:///Users/liuzhe.x/coding/ai-chat-pet/apps/parent-h5/src/server/neonDb.ts) 在服务端首次请求时自动幂等创建。
-
----
-
-## 四、Monorepo 代码目录说明
-
-```text
-ai-chat-pet/
-├── docs/
-│   └── esp32-ai-pet-solution.md        # 原始产品需求与硬件交互规范
-├── packages/
-│   └── contracts/                      # 跨端共享 TypeScript 数据模型与人设常量
-├── apps/
-│   ├── parent-h5/                      # 家长端 H5 + Vercel Serverless 后端 (Next.js 14)
-│   │   ├── src/server/
-│   │   │   ├── neonDb.ts               # Neon PostgreSQL 连接与 7 张表自动初始化
-│   │   │   ├── deviceStore.ts          # 设备心跳、绑定、音量同步与 60s 在线判定
-│   │   │   ├── appDataStore.ts         # 日程、微聊(含阅后即焚音频)、人设、日志 CRUD
-│   │   │   ├── audioStore.ts           # 定时播报 MP3 持久化与按 MD5 去重
-│   │   │   ├── emqxPublisher.ts        # EMQX Cloud Serverless HTTP API 推送封装
-│   │   │   └── doubaoVoice.ts          # 豆包语音 V3 TTS 2.0 & 声音复刻接口封装
-│   │   ├── src/app/api/v1/
-│   │   │   ├── mqtt/config/route.ts    # 获取家长端 H5 WSS 订阅配置
-│   │   │   ├── device/sync/route.ts    # 设备心跳、校时、音量与 alarm_ack / voice_read
-│   │   │   ├── device/status/route.ts  # 家长端设备实时在线状态查询与绑定/解绑
-│   │   │   ├── ai/chat/route.ts        # 火山方舟 LLM 问答 + 豆包 TTS 实时语音回复
-│   │   │   ├── pet-ai/route.ts         # AI 宠物人设读写与问答记录查询
-│   │   │   ├── schedules/route.ts      # 定时语音任务增删改查与开关
-│   │   │   ├── chat/messages/route.ts  # 亲子双向微聊消息收发与已读状态同步
-│   │   │   ├── chat/messages/[id]/audio/route.ts # 未读微聊原声 WAV 临时投递端点
-│   │   │   ├── voice-clone/route.ts    # 豆包声音复刻上传、状态查询与档案管理
-│   │   │   ├── tts/route.ts            # 豆包 TTS 语音合成接口
-│   │   │   └── audio/[md5]/route.ts    # 定时播报永久 MP3 下载/播放端点
-│   │   ├── src/utils/
-│   │   │   ├── wavRecorder.ts          # 浏览器 24kHz Mono WAV 录音封装
-│   │   │   ├── chatAudioDb.ts          # 家长端 IndexedDB 本地微聊语音库 (200条/100MB LRU)
-│   │   │   └── useMqttParentSync.ts    # 家长端 EMQX WSS 毫秒级事件监听 Hook
-│   │   └── src/views/                  # WeChatVoice / VoiceSchedules / PetAIConfig / DeviceSettings
-│   └── pet-device/                     # 微雪 ESP32-S3-Touch-AMOLED-2.16 固件 (ESP-IDF)
-│       ├── main/
-│       │   ├── main.c                  # 入口：初始化 Wi-Fi、存储配额、音频、RTC、UI 与心跳/MQTT
-│       │   ├── Kconfig.projbuild       # menuconfig 配置 Wi-Fi、Server URL、EMQX 与缓存配额
-│       │   ├── wifi_manager.c/.h       # Wi-Fi STA 连网重连与 MAC 派生 DeviceID
-│       │   ├── mqtt_client_mgr.c/.h    # EMQX Serverless TLS (8883) 毫秒级订阅唤醒
-│       │   ├── device_sync.c/.h        # HTTPS 心跳兜底、RTC 校时、音量与 ACK 上报
-│       │   ├── rtc_scheduler.c/.h      # 拉取定时任务 JSON、MP3 预缓存与准点唤醒
-│       │   ├── chat_client.c/.h        # AI 对话音频流请求与亲子微聊 WAV 双向收发
-│       │   ├── chat_storage.c/.h       # 设备端 Flash/TF 本地微聊存储 (体积+条数+天数三重 FIFO)
-│       │   ├── ui_state_machine.c/.h   # 双页状态机、GPIO0 物理按键防抖与闹钟确认
-│       │   └── audio_engine.c/.h       # ES7210 双麦 AEC 录音与 ES8311 音量/播放控制
-│       └── preview/index.html          # 480×480 方形 AMOLED 屏幕交互预览器
-└── supabase/schema.sql                 # PostgreSQL 参考建表脚本
-```
-
----
-
-## 五、本地开发与部署指南
-
-### 单家庭 HTTPS 访问保护
-
-家长使用用户名和家庭密码登录，服务端通过 HttpOnly、SameSite cookie 保存 7 天会话。家长登录用于批准设备绑定；设备不需要内置家庭密码或共享设备令牌。服务端需要配置以下三项：
-
-- `PET_FAMILY_USERNAME`：家庭登录用户名。
-- `PET_FAMILY_PASSWORD`：家庭登录密码，至少 10 个字符。
-- `PET_SESSION_SECRET`：至少 32 个字符的随机服务端密钥，用于家长会话和配对令牌签发；仅保存在服务端。
-
-设备联网后向 `/api/v1/device/pairing/start` 申请 8 位绑定码，家长在「家庭设备 → 配对新设备」输入该码。绑定码 10 分钟有效，认领只允许成功一次。设备以本地随机生成的配对证明轮询 `/api/v1/device/pairing/poll`，家长批准后领取独立令牌并保存到 NVS，后续通过 HTTPS 的 `X-Pet-Device-Token` 请求 API。服务端仅保存令牌的 SHA-256 摘要；待领取令牌在配对有效期内可重试交付，避免响应丢失造成设备无法恢复。
-
-解绑会立即撤销设备令牌并删除配对会话。设备收到 401 后回到配对状态；令牌正常时重启无需重新绑定。清空 NVS 后若服务端仍记录设备已绑定，需要先在家长端解绑。切换后端域名也会清除该设备本地旧凭证。绑定码申请、轮询和认领均有数据库限流。生产环境配对必须配置 `DATABASE_URL`，开发环境未配置数据库时才使用内存存储。
-
-`PET_DEVICE_TOKEN` 已停用，可以从服务端环境变量删除；固件 `menuconfig` 不再提供该字段。升级时先部署新家长端/API，再烧录新固件，旧固件共享令牌无法继续认证。Wi-Fi 连接信息与设备配对独立，目前仍通过固件配置提供。
-
-这仍是单家庭原型，未实现多家庭账号隔离。设备令牌只能访问自己设备的消息、心跳和日程，不能替其他设备上传或确认消息。家长端退出会清除浏览器会话；撤销其他浏览器会话可轮换 `PET_SESSION_SECRET`。轮换该密钥时，尚未完成领取的配对需要重新发起；已经保存在设备上的令牌不受影响。
-
-### 1. 环境变量配置（`apps/parent-h5/.env.local`）
+本地配置放在 **`apps/parent-h5/.env.local`**，不是仓库根目录；生产配置在 Vercel 项目的环境变量中维护。不要把真实 API Key、家庭密码、设备 Token 或 Wi-Fi 密码写进 README、日志或 Git。
 
 ```ini
-# Neon PostgreSQL（Vercel 集成自动注入，可用 vercel env pull 拉取）
 DATABASE_URL=postgresql://...
 
-# 火山引擎「豆包语音」V3（仅需一个 API Key）
-DOUBAO_SPEECH_API_KEY=你的豆包语音API_KEY
-VOLC_V3_CLONE_RESOURCE_ID=seed-icl-2.0
+PET_FAMILY_USERNAME=你的家庭用户名
+PET_FAMILY_PASSWORD=至少10个字符的家庭密码
+PET_SESSION_SECRET=至少32个字符的随机服务端密钥
+
+# 语音识别 / 合成：使用服务端语音 Key，并确认对应资源已开通
+DOUBAO_SPEECH_API_KEY=你的豆包语音Key
+VOLC_ASR_RESOURCE_ID=volc.bigasr.auc_turbo
 VOLC_V3_TTS_RESOURCE_ID=seed-tts-2.0
+VOLC_V3_CLONE_RESOURCE_ID=seed-icl-2.0
 VOLC_PET_VOICE_TYPE=zh_female_vv_uranus_bigtts
 
-# 火山方舟大模型（用于小铭同学问答）
-ARK_API_KEY=你的火山方舟API_KEY
+# LLM
+ARK_API_KEY=你的火山方舟Key
 ARK_MODEL_ID=doubao-seed-2-0-mini-260428
-
-# EMQX Cloud Serverless（可选，用于 <0.3s 毫秒级推送）
-EMQX_HOST=你的部署域名.emqxsl.com
-EMQX_HTTP_PORT=8443
-EMQX_APP_ID=你的EMQX_App_ID
-EMQX_APP_SECRET=你的EMQX_App_Secret
-EMQX_WSS_PORT=8084
-EMQX_CLIENT_USERNAME=你在EMQX创建的客户端用户名
-EMQX_CLIENT_PASSWORD=你在EMQX创建的客户端密码
 ```
 
-### 2. 本地启动与验证
+人设和音色可由家长端按设备配置。模型可通过环境变量调整；以账号实际可用模型为准。声音复刻需要控制台已开通的 `S_...` 音色 ID，训练完成或激活后才能用于合成。
 
 ```bash
+# 仓库根目录
 pnpm install
 pnpm dev:h5
 
-# 类型检查与生产构建验证
 pnpm --filter parent-h5 exec tsc --noEmit
 pnpm build:h5
 ```
 
-### 3. ESP32-S3 固件编译与设备绑定
+开发服务默认端口为 `5189`。生产项目为 `xiao-ming-tong-xue`，Vercel 的 **Root Directory 是 `apps/parent-h5`**。使用 CLI 时，从包含 `apps/`、`packages/` 和工作区锁文件的仓库根目录上传，避免再次叠加 `apps/parent-h5` 路径：
 
 ```bash
-cd apps/pet-device
-# 使用 ESP-IDF 5.5.2（微雪 BSP 要求 >= 5.5）
-idf.py set-target esp32s3
-idf.py menuconfig   # 在 "AI Chat Pet (小铭同学) Configuration" 填入 Wi-Fi 与 Vercel 域名
-idf.py build flash monitor
+# 首次在仓库根目录关联已有项目；后续沿用关联
+pnpm exec vercel link --project xiao-ming-tong-xue
+pnpm exec vercel --prod
 ```
 
-1. 固件启动并联网后，屏幕显示 8 位绑定码。
-2. 打开家长端 H5「家庭设备 → 配对新设备」，输入绑定码和宝贝昵称。
-3. 设备自动领取令牌并进入宠物界面，随后开始心跳；断电重启会继续使用本地令牌。
-4. 解绑后原令牌失效，设备自动重新申请绑定码。
+部署前先通过类型检查、测试和生产构建；更新设备协议时先部署兼容 API，再烧录固件。本次也通过 CLI 上传了当前服务端源码，线上部署不一定与 Git 最新提交相同，需以 Vercel 部署记录为准。
 
-配对验证：
+### 域名与网络约定
+
+业务域名为 **`https://xiaoming.1203.fyi`**，保留 Cloudflare 代理，回源 Vercel。**不要切为“仅 DNS”**：本项目的使用网络无法可靠直连 Vercel 域名。也不要为绕过故障关闭 TLS 证书校验或把服务端 API Key 放进设备。
+
+当前设备通过业务 API 间接调用火山服务，并非直连火山 Chat API。继续保持这一方案；直接接入火山还需要分别处理 ASR、LLM、TTS 及设备临时凭证，不是只替换一个 URL。
+
+## 4. 固件编译、烧录与串口
+
+### 工具链与首次配置
+
+使用 **ESP-IDF 5.5.2**，目标 `esp32s3`，Flash 16 MB、PSRAM 8 MB。微雪 BSP 依赖 ESP-IDF 5.5 及以上；不要用旧工具链沿用同一个构建目录。
+
+先安装对应 IDF 和工具链，并将 `IDF_PATH` 指向该安装目录。本次本机工具链位于 `/tmp/ai-pet-esp-idf-5.5`，这是临时路径，重启/清理后可能不存在，不能作为长期安装约定。
 
 ```bash
+# 从仓库内执行，记录根目录后再进入固件工程
+PET_REPO_ROOT="$(git rev-parse --show-toplevel)"
+source "$IDF_PATH/export.sh"
+cd "$PET_REPO_ROOT/apps/pet-device"
+
+# 仅首次配置目标时执行；日常刷固件不需要重复 set-target
+idf.py -B build-idf55 set-target esp32s3
+idf.py -B build-idf55 menuconfig
+```
+
+在 `AI Chat Pet (小铭同学) Configuration` 中设置 Wi-Fi 名称、密码和服务端 URL；URL 使用 `https://xiaoming.1203.fyi`，不带末尾 `/`。Wi-Fi 配网与业务绑定是两件事：**当前 Wi-Fi 仍通过固件配置，没有手机配网页面或设备上的 Wi-Fi 列表。**
+
+`sdkconfig` 中包含本机 Wi-Fi 信息，已忽略入库；通用参数维护在 `sdkconfig.defaults`。不要把真实密码改成项目默认值。
+
+### 日常刷新固件
+
+本次 macOS 串口是 `/dev/cu.usbmodem1101`，重新插拔后可能变化。Linux 通常为 `/dev/ttyACM*`，Windows 为 `COM*`，以当前系统识别结果为准。
+
+```bash
+# 必须在 apps/pet-device 中执行
+source "$IDF_PATH/export.sh"
+
+# 正常固件明确关闭自动声音自检
+idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=OFF build
+idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash
+idf.py -B build-idf55 -p /dev/cu.usbmodem1101 monitor
+```
+
+`monitor` 用 `Ctrl+]` 退出。**先关闭串口监听器，再烧录**，避免端口被占用。正常 `flash` 会刷新程序和分区表，不需要执行 `erase-flash`；保持 NVS 分区、服务端域名不变时，绑定凭据会保留。
+
+本次反复遇到的路径问题：从仓库根目录运行 `idf.py`，或者用 `-C apps/pet-device` 配合相对 `-B build-idf55`，容易生成错误位置的构建目录。最稳妥的办法是先 `cd apps/pet-device`，所有命令统一使用 `-B build-idf55`。也不要混用该目录与默认 `build/` 中的旧固件。
+
+如果串口突然消失，先检查 USB 数据线、设备供电、按键是否松开和新端口名称，不要反复清空 NVS。需要清空凭据重新配对时，先在家长端解绑，再有针对性地处理设备状态。
+
+### 分区与关键配置
+
+| 区域 | 偏移 | 大小 / 用途 |
+| --- | --- | --- |
+| NVS | `0x9000` | 24 KB；配对凭据、提醒触发记录和待确认事件 |
+| PHY | `0xf000` | 4 KB |
+| Factory App | `0x10000` | 4 MB |
+| SPIFFS storage | `0x410000` | 11 MB；挂载 `/spiffs` |
+
+分区定义见 [partitions.csv](apps/pet-device/partitions.csv)。新增文件系统必须实际挂载，只有 `mkdir` 或一条“存储就绪”日志不能证明可保存文件。SPIFFS 使用带路径前缀的文件名，不是真实多级目录，也不等同于已挂载 TF 卡。
+
+关键参数包括：`SPIFFS_OBJ_NAME_LEN=96`，DNS 地址数 4，TCP 发送缓冲 16384，PSRAM 允许外部任务栈，mbedTLS 使用默认堆分配策略，以及 FreeRTOS 栈末尾观察点。音频任务预留 40 KB 栈；心跳 16 KB、定时巡检 12 KB。录音/重发涉及 Flash 写入，使用内部栈；独立解码任务使用 PSRAM 栈，不在其中进行文件写入。
+
+## 5. 绑定与鉴权方案
+
+1. 设备本地生成随机配对证明，向 `/api/v1/device/pairing/start` 申请 **8 位绑定码**。
+2. 家长登录 H5，在“家庭设备 → 配对新设备”输入绑定码；码有效期 10 分钟，认领只能成功一次。
+3. 设备携带自己的配对证明轮询 `/api/v1/device/pairing/poll`，领取独立 Token 并保存到 NVS。
+4. 业务请求通过 HTTPS 的 `X-Pet-Device-Token` 鉴权；服务端保存 Token 的 SHA-256 摘要。领取响应丢失时可重试交付。
+5. 解绑后凭据撤销；设备收到 401 回到绑定流程。重启不要求重新绑定；切换服务端 origin 会清除该 origin 对应的本地旧凭据。
+
+固件不再内置家庭密码或共享 `PET_DEVICE_TOKEN`。仅给**配置的 HTTPS origin**附加设备 Token，禁止自动跨域重定向携带凭据；设备不能替其他设备上传、下载私有消息或确认已读。
+
+家长登录使用 HttpOnly、SameSite 的 7 天会话。配对申请、轮询和认领有数据库限流；生产必须使用持久数据库。这仍是**单家庭原型**，不是已实现多家庭隔离及完整分布式登录防护的公众平台。轮换 `PET_SESSION_SECRET` 会影响家长会话及未完成领取的配对，已经保存在设备上的独立 Token 不会因此自动失效。
+
+## 6. 音频与重发方案
+
+### 录制、编码与发送
+
+- ES7210 以 16 kHz、16-bit、单声道采集，每次读取 20 毫秒 PCM；按下启动，松开结束，过短不发送，最长 15 秒。
+- 发给家长采用 **24 kbps AAC-LC / ADTS**；问 AI 采用 **16 kbps Ogg Opus**。编码失败回退 WAV。
+- 使用乐鑫 `esp_audio_codec`；依赖清单约束 `^2.4.1`，本次锁定版本为 2.6.2。不要忽略 `dependencies.lock`。
+- AI 使用 Ogg Opus 是因为当前豆包极速 ASR 支持 WAV、MP3、Ogg Opus，**不能把微聊使用的 AAC 直接交给该 ASR 接口**。
+- AAC 补齐末帧并排出编码延迟，避免截掉最后音节。Opus 包装为标准 Ogg，包含 OpusHead、OpusTags、CRC、pre-skip 和结束 granule；实机生成的音频已用 ffmpeg 验证可解码。
+- Base64 JSON 分 2048 字节写入；上传时暂时关闭 Wi-Fi 省电，结束恢复原设置。不能把一次性大块 `write` 的返回值当作完整上传。
+
+最近一条待发录音保存于 `/spiffs/outgoing.bin`，包含目标、时长、MIME、稳定消息 ID 和编码后的原音频。重发不重新开麦克风；新录音替换旧记录，成功后清理。临时文件完成写入后再 rename，重启会读取有效的待发记录。
+
+亲子消息的服务端按消息 ID 幂等写入：同设备、同方向的重复请求返回原记录，不覆盖音频；已经读过的消息不会因重试恢复为未读，也不会重新填入已销毁的音频；跨设备或方向冲突返回 409。
+
+### 实际解码与已读确认
+
+MP3/AAC/WAV/Ogg 通过 `esp_audio_simple_dec` 解码，按解码得到的采样率、声道和位深打开 ES8311，再写入 PCM。输出缓冲不足时按 `needed_size` 扩容，保留尚未消耗的输入，不能静默截断音频。
+
+录音与播放共享 codec 互斥锁。家长语音只有在**真实播放完成**后才发送 `voice_read`；下载失败、解码失败或播放中断不确认、不删除云端音频。当前家长消息通过“收听家长语音”按钮播放，不应把旧 MQTT / `autoPlay` 规划描述为已验证的自动播放。
+
+家长端录音使用 Web Audio 输出 WAV，避免把浏览器默认 WebM 交给不支持该容器的设备。家长端 IndexedDB 保留本地音频；设备侧保存待发录音与当前接收缓存，播放且确认后清理接收文件。旧 `chat_storage.c` 的三重配额历史索引未接入当前主流程，不要把它当作已实现的 Flash/TF 历史语音库。
+
+## 7. AI 与定时播报方案
+
+### AI：ASR → LLM → TTS
+
+设备向 `POST /api/v1/ai/chat` 发送 `deviceId`、`audioBase64`、`audioMime` 和 `responseFormat: "mp3"`。服务端先鉴权，再校验格式和文件头，之后依次调用：
+
+1. 豆包极速 ASR：`https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash`，使用服务端 `X-Api-Key` 和 `volc.bigasr.auc_turbo` 资源。
+2. 火山方舟 Chat Completions：读取设备的人设、音色配置，生成简短口语回答。
+3. 豆包 V3 TTS：合成 MP3，返回 `Content-Type: audio/mpeg`；问答文本写入 `ai_chat_logs`，问答音频不持久化。
+
+静音/未识别、服务未配置、LLM 或 TTS 失败返回明确错误，不能用固定“你好呀”替代问题，也不能返回 HTTP 200 的 JSON 冒充 MP3。接口执行上限 60 秒，ASR 15 秒、LLM 总预算 20 秒、TTS 15 秒。设备校验响应类型、大小与完整性后才播放。
+
+AI 建连失败时，在请求体尚未发出的前提下自动换一个已解析地址重试一次；可能完整上传后不自动重复 AI 调用，保留录音供用户明确重试。“正在思考”只在成功上传后显示，建连阶段显示“正在连接网络”。
+
+### 定时任务：下载一次，开机离线执行
+
+家长生成定时音频时使用 `persist: true`，MP3 按内容 MD5 存入 `tts_audio_files`；日程保存音频 URL、MD5、时分、重复星期及播放次数。当前音频接口有鉴权，响应为 `private, no-store`，不是公开 CDN 永久缓存。
+
+心跳返回日程内容的 SHA-256 `scheduleVersion`，不只比较任务数量。设备发现变化后：
+
+1. 拉取任务 JSON，落盘为 `/spiffs/schedules.json`。
+2. 下载音频到 `/spiffs/alarms/<md5>.mp3`，校验完整长度和 MD5，再原子替换；下载失败保持版本待重试，清理不再引用的旧缓存。
+3. 从 PCF85063（I²C `0x51`）恢复时钟；联网后用服务端时间校准系统与 RTC。振荡停止标志或无效寄存器时间不能直接采用。
+4. 按 `CST-8`（中国时区）每秒检查；ISO 星期为周一 1～周日 7，`repeatDays=[]` 表示仅一次。播放次数限制为 1～5。
+5. 用 NVS 保存任务、时分及音频组合对应的触发日期，日期包含年份；重复同步、同分钟重启或跨年不能造成错误重播/漏播。
+6. 用户点“知道了”停止并排队确认；离线 `alarm_ack` 保存在 NVS，后续心跳补报。播放结束本身不冒充用户确认。
+
+## 8. 联调中遇到的问题与排查顺序
+
+| 现象 / 日志 | 本次经验与处理 |
+| --- | --- |
+| 屏幕能显示按钮，触摸没反应 | 检查 CST92xx 触摸输入及中断通知。保留微雪 `swap_xy=1`、`mirror_y=1` 的方向，并每 30 ms 通知适配器读取触摸；先证明按下/松开事件进入，再检查业务任务 |
+| 显示“准备录音”后不动 | 状态文字不是执行证据。核对事件、任务创建返回值、栈、codec 初始化和实际 PCM 字节数；LVGL 回调内不做网络或阻塞录音 |
+| 个别中文字缺失 | `pet_font.c` 是子集字体，新增文案必须增加字形。ASCII 正常不代表汉字齐全；不能靠改编码或增大控件解决缺字 |
+| 字体生成后编译找不到 `lvgl/lvgl.h` | 当前工程使用 `#include "lvgl.h"`，需要调整 `lv_font_conv` 生成的默认 include |
+| 白屏、刷新失败、`spi transmit ... ESP_ERR_NO_MEM` | SPI 给 PSRAM 显存分配内部 DMA 中转内存；仅看剩余总堆不够，还要看连续 DMA 内存。显示改为 16 行/约 15 KB 传输块，移除未使用的约 40 KB 旧缓存索引 |
+| `mbedtls_ssl_setup -0x7F00` | TLS 内存不足。mbedTLS 改用默认堆策略，让大块使用 PSRAM；心跳先清理 HTTP/TLS 客户端，再拉取消息和日程，避免嵌套保留多份 TLS 缓冲 |
+| 并发时崩溃、回溯损坏 | 除堆之外检查任务栈，不能一律归咎于网络。增大心跳/定时任务栈，开启栈末尾观察点，观察 `Sync resources` 水位；调整后继续静默验证 |
+| 未绑定却一直不显示绑定码 | ESP-IDF 对没有 Basic/Digest challenge 的 JSON 401 可能返回 `ESP_ERR_NOT_SUPPORTED`；要保留真实 HTTP 401，让配对流程继续，不要一概当作网络失败 |
+| 配对后重启丢失、反复绑定 | 核对 NVS 是否保留、服务端 origin 是否变化、是否误刷其他构建目录或清空 Flash；业务 Token 与 Wi-Fi 密码不同 |
+| Wi-Fi 断开 `reason=201` | 没搜到配置的 AP，先确认热点名称、开启状态、供电和距离；这不等于热点没有互联网 |
+| Wi-Fi 已连接，但 `select() timeout` / `ESP_ERR_HTTP_CONNECT` | 有局域网 IP 不代表连到业务服务器。分别检查 DNS、TCP、TLS、上传和响应，记录实际连接 IP；本次多次在连接 Cloudflare 的阶段失败，尚未到火山 API |
+| 电脑接口成功，设备仍失败 | 电脑可能走代理 / Fake-IP DNS；本次电脑曾解析到 `198.18.*`，设备解析到真实 Cloudflare 地址，两者链路不能等同 |
+| 语音很慢 / 一直发送 | 分段上传、进度、连接/上传/响应分阶段超时与日志；压缩减少数据量，但无法修复 TCP/TLS 建连失败 |
+| AAC 上传给 ASR 后失败 | 微聊可使用 AAC；当前极速 ASR 改用 WAV/MP3/Ogg Opus，不能只修改 MIME 而不改变编码 |
+| 串口读取 `Device not configured` / 端口消失 | USB 或电源状态已变化；停止旧监听、确认重新插拔后的端口，再烧录，避免误判为固件 HTTP 错误 |
+
+HTTPS 地址切换只使用 DNS 解析结果，仍保留**原域名 SNI、证书主机名校验和 HTTP Host**，不关闭证书验证，不硬编码某个 CDN IP。HTTP 401/4xx/5xx 与无响应的传输失败分别处理；实际 HTTP 响应说明服务器已可达，不能一概标记该 IP 不通。
+
+### 本次测量，不能混为同一次成功链路
+
+| 测量项 | 实测结果 |
+| --- | --- |
+| 3 秒、22.05 kHz WAV | JSON 约 176,694 字节，曾成功上传，约 32 秒 |
+| 改 16 kHz WAV、关闭上传期省电、增大发送缓冲 | JSON 约 128,294 字节，成功样本约 21 秒：连接 6.4 秒、上传 12.6 秒、响应 2.1 秒 |
+| 3 秒 PCM 编码 AAC | 96,000 字节 PCM → 9,462 字节 AAC，JSON 约 12,850 字节；该次上传建连失败，不能称为压缩后发送已验证成功 |
+| 设备编码 1 秒 Opus | Ogg 3,567 字节；ffmpeg 解码回 16 kHz 单声道 PCM 恰好 32,000 字节 |
+| 设备编码 1 秒 AAC | AAC 3,456 字节，ffprobe 确认 16 kHz 单声道 AAC；包含编码排空的尾部时长 |
+| 云端完整 AI 语音链路 | 合成“太阳为什么会发光”作为输入，ASR/LLM/TTS 返回 42,093 字节 MP3，浏览器成功解码约 5.256 秒音频；请求约 10.05 秒 |
+| 设备 MP3 解码播放 | 29,037 字节测试 MP3 → 173,952 字节 PCM，扬声器写入完成 `ESP_OK` |
+| 离线提醒 / 待发恢复 | `OFFLINE_ALARM=PASS`、`OUTBOX_ROUNDTRIP=PASS`；最终正常固件关闭自动自检 |
+
+仍需在稳定的设备外网链路下完成 AI 问答与压缩微聊的连续成功率/耗时验收。手机热点本身已使用移动数据，不应再把“切成移动数据”作为默认排查建议。当前按用户要求保留 Cloudflare 代理及服务端中转，并暂停主动声音测试。
+
+## 9. 测试与后续维护
+
+### 自动化检查
+
+```bash
+# 在仓库根目录
+pnpm --filter parent-h5 exec tsc --noEmit
+pnpm build:h5
+
 cd apps/parent-h5
 node --test tests/*.test.cjs
-# 本地 Next 服务启动在 5190 端口后，可使用真实 PostgreSQL 验证并发认领和解绑撤销；测试仅清理自身随机设备。
-PAIRING_INTEGRATION=1 node --test tests/device-pairing.integration.cjs
 ```
+
+本次 20 项测试通过，覆盖配对/权限、声音复刻、ASR 校验、AI 失败语义和消息重发幂等。另用隔离的随机消息 ID 验证了真实 PostgreSQL 并发去重、已读后重试不恢复音频、跨设备冲突，并清理测试记录。
+
+```bash
+# 仓库根目录：固件的纯调度规则测试，不连接设备、不播放声音
+cc -Wall -Wextra -Werror apps/pet-device/tests/schedule_rules_test.c -o /tmp/pet-schedule-check
+/tmp/pet-schedule-check
+```
+
+配对的真实数据库集成测试另见 `apps/parent-h5/tests/device-pairing.integration.cjs`，按文件中的环境及本地服务要求单独运行，不应把它混同于默认单元测试。
+
+### 显式声音自检：默认不要开启
+
+正常固件使用 `PET_HARDWARE_SMOKE=OFF`。下面的自检会**外放合成测试音频、短暂断开并恢复 Wi-Fi，自动测试离线提醒**；仅在允许声音测试时执行，不能在要求静默时运行。测试不录制麦克风，使用人工提供的合成 MP3。
+
+```bash
+# apps/pet-device，已加载 IDF 环境
+idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=ON -D PET_SMOKE_MP3=/absolute/path/to/synthetic.mp3 build
+idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash monitor
+
+# 完成后必须关闭自检，重新构建并烧录正常固件
+idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=OFF build
+idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash
+```
+
+可额外提供 `-D PET_SMOKE_PCM=/absolute/path/to/synthetic.pcm`，测试设备把 16 kHz、16-bit、单声道合成语音编码为 Opus 后请求 AI。此模式成功时也会外放回答。不要把声音自检固件作为正常固件交付。
+
+### 中文字体更新
+
+使用 Noto Sans SC 字体源和 `lv_font_conv`：20 px、4 bpp、ASCII 32～126，加上所有 UI 文案所需汉字/标点，生成 `main/pet_font.c`，并保证 include 为 `lvgl.h`。字体源在本次机器上为 `/tmp/NotoSansSC.ttf`，它不属于仓库，需要自行准备并记录来源。
+
+生成时必须把**既有与新增文案一起收集**，不能仅传入新增几个字而丢掉原来字形。再做完整固件构建；最终用屏幕检查常见录音、发送、绑定和提醒文案。
+
+### 静默验收顺序
+
+1. 检查 `Device credentials: loaded`、显示初始化、Wi-Fi IP、`Sync [heartbeat] -> HTTP 200`，确认没有声音自检日志。
+2. 仅切换两个页面，验证显示和触摸；核对实体键位置与事件日志。
+3. 需要声音验收时再单独测试录音、回放、上传、AI 和到点提醒；下载成功不等于播放成功，云端成功也不等于设备成功。
+4. 确认失败时保留原录音、出现重发按钮，重启后仍可重试；确认普通烧录没有清除绑定。
+5. 记录固件构建目录、串口、部署版本和每阶段实际耗时。临时 `/tmp` 日志仅供本机排查，不作为长期文档依赖。
