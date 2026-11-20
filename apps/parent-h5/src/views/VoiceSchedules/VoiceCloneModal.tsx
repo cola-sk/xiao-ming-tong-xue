@@ -454,7 +454,7 @@ export const VoiceCloneModal: React.FC<Props> = ({
             {mode === 'retrain' && <p className="text-xs text-[#9B742F]">将更新此音色并消耗一次训练机会。已有定时任务音频不会自动更新，需要重新保存任务。</p>}
             <div className="flex items-center justify-between">
               <span className="text-h3 text-[#242620] inline-flex items-center gap-1.5">
-                <IconSparkle className="w-4 h-4 text-[#FF7A59]" />
+                <IconSparkle className="w-4 h-4 text-[#E85835]" />
                 <span>{mode === 'create' ? '录制样本创建声音' : '录制新样本更新声音'}</span>
               </span>
             </div>
@@ -491,7 +491,7 @@ export const VoiceCloneModal: React.FC<Props> = ({
               <div className="text-[11px] text-[#77786F] font-semibold">
                 请在安静环境下朗读以下文字（自动录制为 24kHz 单声道标准 WAV 格式，约 6~12 秒）：
               </div>
-              <p className="text-sm font-bold text-[#FF7A59] leading-relaxed">
+              <p className="text-sm font-bold text-[#E85835] leading-relaxed">
                 “{DEFAULT_SAMPLE_SCRIPT}”
               </p>
             </div>

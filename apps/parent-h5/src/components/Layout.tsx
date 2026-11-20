@@ -136,7 +136,7 @@ export const Layout: React.FC = () => {
       {roleModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 select-none">
           <div className="w-full max-w-xs rounded-3xl bg-white p-6 shadow-2xl border border-[#E9E7E0] space-y-4 text-center animate-fade-in">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-[#FFF0EB] text-[#FF7A59] flex items-center justify-center text-3xl shadow-sm">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-[#FDF1EC] text-[#E85835] flex items-center justify-center text-3xl shadow-sm">
               👨‍👩‍👧
             </div>
             <div>

@@ -230,7 +230,7 @@ export const VoiceSchedulesPage: React.FC = () => {
                       )
                     </span>
                   ) : sched.lastAckStatus === 'ringing' ? (
-                    <span className="text-[#FF7A59] font-bold">正在响铃待确认…</span>
+                    <span className="text-[#E85835] font-bold">正在响铃待确认…</span>
                   ) : (
                     <span>等待准点触发</span>
                   )}

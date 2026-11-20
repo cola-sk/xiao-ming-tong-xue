@@ -4,7 +4,7 @@
 
 :root {
   color-scheme: light;
-  accent-color: #FF7A59;
+  accent-color: #E85835;
   --app-canvas: #F5F4F0;
   --app-surface: #FFFFFF;
   --app-ink: #242620;
@@ -12,13 +12,13 @@
   --app-line: #E9E7E0;
   --app-forest: #3E493F;
   --app-brand-red: #FF6B6B;
-  --app-accent: #FF7A59;
-  --app-accent-soft: #FFF0EB;
+  --app-accent: #E85835;
+  --app-accent-soft: #FDF1EC;
   --app-gold: #FF8E53;
   --app-gold-soft: #FFF5EB;
   --app-success: #4C7866;
   --app-success-soft: #E9F2EC;
-  --adm-color-primary: #FF7A59;
+  --adm-color-primary: #E85835;
   --adm-color-success: #4C7866;
   --adm-color-warning: #FF8E53;
   --adm-color-danger: #FF6B6B;
@@ -400,10 +400,10 @@ html, body {
 }
 
 .approval-action-primary {
-  border: 1px solid #FF7A59;
-  background: #FF7A59;
+  border: 1px solid #E85835;
+  background: #E85835;
   color: #FFFFFF;
-  box-shadow: 0 3px 8px rgba(255, 122, 89, 0.24);
+  box-shadow: 0 3px 8px rgba(232, 88, 53, 0.22);
 }
 
 .approval-action {
@@ -420,8 +420,8 @@ html, body {
 }
 
 .approval-action-primary:hover {
-  background: #F06445;
-  box-shadow: 0 4px 10px rgba(255, 122, 89, 0.3);
+  background: #D24624;
+  box-shadow: 0 4px 10px rgba(232, 88, 53, 0.28);
 }
 
 .today-task-list {
@@ -608,7 +608,7 @@ h1, h2, h3, h4, .font-headline {
   border: none;
 }
 .kid-btn-primary:hover:not(:disabled) {
-  background-color: #F06445;
+  background-color: #D24624;
 }
 
 .kid-btn-secondary {
@@ -688,7 +688,7 @@ h1, h2, h3, h4, .font-headline {
 .kid-input:focus {
   outline: none;
   border-color: var(--app-accent);
-  box-shadow: 0 0 0 2px rgba(255, 122, 89, 0.16);
+  box-shadow: 0 0 0 2px rgba(232, 88, 53, 0.16);
 }
 .kid-input:disabled {
   border-color: #E5E7EB;

@@ -124,7 +124,7 @@ export const PetAIConfigPage: React.FC = () => {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <IconSparkle className="w-4 h-4 text-[#FF7A59] shrink-0" />
+              <IconSparkle className="w-4 h-4 text-[#E85835] shrink-0" />
               <h2 className="text-h2 text-[#242620]">我的声音管理</h2>
               <span className="kid-status-chip kid-status-new">已克隆 {voiceClones.length} 个音色</span>
             </div>
@@ -248,7 +248,7 @@ export const PetAIConfigPage: React.FC = () => {
                   }}
                   className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
                     selected
-                      ? 'bg-[#FFFEFB] border-[#FF7A59] shadow-sm'
+                      ? 'bg-[#FFFEFB] border-[#E85835] shadow-sm'
                       : 'bg-white border-[#E9E7E0]'
                   }`}
                 >
@@ -278,10 +278,10 @@ export const PetAIConfigPage: React.FC = () => {
                     </button>
                     <span
                       className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                        selected ? 'border-[#FF7A59]' : 'border-[#D1D5DB]'
+                        selected ? 'border-[#E85835]' : 'border-[#D1D5DB]'
                       }`}
                     >
-                      {selected && <span className="w-2 h-2 rounded-full bg-[#FF7A59]" />}
+                      {selected && <span className="w-2 h-2 rounded-full bg-[#E85835]" />}
                     </span>
                   </div>
                 </div>
