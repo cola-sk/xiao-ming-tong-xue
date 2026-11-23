@@ -70,6 +70,8 @@ interface AppState {
   configDeviceId: string;
   messagesDeviceId: string;
   schedulesDeviceId: string;
+  schedulesLoaded: boolean;
+  schedulesError: string;
   unreadCounts: Record<string, number>;
   syncUnreadCounts: () => Promise<void>;
   setAutoPlayOnDevice: (enabled: boolean) => Promise<void>;
@@ -135,7 +137,7 @@ export const useAppStore = create<AppState>()(
       voiceClones: INITIAL_VOICE_CLONES,
       petConfig: INITIAL_PET_CONFIG,
       aiLogs: INITIAL_AI_LOGS,
-      configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '',
+      configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '', schedulesLoaded: false, schedulesError: '',
       unreadCounts: {},
       syncUnreadCounts: async () => {
         try {
@@ -320,7 +322,7 @@ export const useAppStore = create<AppState>()(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...draft, id, groupId, deviceId }),
           });
-          if (!response.ok) throw new Error(deviceId);
+          if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `设备 ${deviceId} 保存失败（${response.status}）`); }
         }));
         await get().syncSchedulesFromServer();
         if (results.some(result => result.status === 'rejected')) throw new Error('部分设备保存失败，已成功的设备已显示在列表中；可重试');
@@ -335,7 +337,7 @@ export const useAppStore = create<AppState>()(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...item, ...updates, id: item.id, deviceId: item.deviceId, groupId: item.groupId }),
           });
-          if (!response.ok) throw new Error(item.deviceId);
+          if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `设备 ${item.deviceId} 操作失败（${response.status}）`); }
         }));
         await get().syncSchedulesFromServer();
         if (results.some(result => result.status === 'rejected')) throw new Error('部分设备更新失败，请检查列表后重试');
@@ -348,7 +350,7 @@ export const useAppStore = create<AppState>()(
         const enabled = !members.every(item => item.enabled);
         const results = await Promise.allSettled(members.map(async item => {
           const response = await fetch('/api/v1/schedules', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, enabled }) });
-          if (!response.ok) throw new Error(item.deviceId);
+          if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `设备 ${item.deviceId} 操作失败（${response.status}）`); }
         }));
         await get().syncSchedulesFromServer();
         if (results.some(result => result.status === 'rejected')) throw new Error('部分设备操作失败，请检查列表后重试');
@@ -360,7 +362,7 @@ export const useAppStore = create<AppState>()(
         const members = get().schedules.filter(item => existing.groupId ? item.groupId === existing.groupId : item.id === id);
         const results = await Promise.allSettled(members.map(async item => {
           const response = await fetch(`/api/v1/schedules?id=${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error(item.deviceId);
+          if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `设备 ${item.deviceId} 操作失败（${response.status}）`); }
         }));
         await get().syncSchedulesFromServer();
         if (results.some(result => result.status === 'rejected')) throw new Error('部分设备删除失败，请检查列表后重试');
@@ -370,13 +372,16 @@ export const useAppStore = create<AppState>()(
         const version = ++scheduleRequestVersion;
         try {
           const res = await fetch('/api/v1/schedules?deviceId=all', { cache: 'no-store' });
-          if (!res.ok) return;
+          if (!res.ok) {
+            set({ schedulesLoaded: true, schedulesError: `获取定时任务失败（${res.status}）` });
+            return;
+          }
           const data = await res.json();
           if (version !== scheduleRequestVersion) return;
           if (Array.isArray(data.schedules)) {
-            set(s => ({ schedulesDeviceId: 'all', schedules: data.schedules.map((rs: any) => ({ ...rs, familyId: s.family.id })) }));
+            set(s => ({ schedulesDeviceId: 'all', schedulesLoaded: true, schedulesError: '', schedules: data.schedules.map((rs: any) => ({ ...rs, familyId: s.family.id })) }));
           }
-        } catch { /* Retry on the next refresh. */ }
+        } catch { set({ schedulesLoaded: true, schedulesError: '网络连接失败，请检查登录状态或网络后重试' }); }
       },
 
       updatePetConfig: updates => {

@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
  * ESP32-S3 设备状态同步与事件上报 API (`/api/v1/device/sync`)
  * - 接收 ESP32-S3 周期性 HTTPS 心跳 (`heartbeat`) 或状态事件 (`alarm_ack`, `voice_read`)
  * - 更新 Neon PostgreSQL `devices` 表及关联的 `voice_schedules` / `chat_voice_messages` 状态
- * - 响应下行同步配置（服务端当前时间戳供 PCF85063 RTC 校时、ES8311 音量、待收听未读微聊数量与日程数）
+ * - 响应下行同步配置（服务端当前时间戳供 PCF85063 RTC 校时、待收听未读微聊数量与日程数；设备音量以设备本机设置为准）
  */
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
@@ -63,7 +63,6 @@ export async function POST(request: NextRequest) {
       serverEpochSec: Math.floor(Date.now() / 1000),
       receivedEvent: event,
       config: {
-        volumeLevel: petConfig?.volumeLevel ?? device.volumeLevel,
         petName: petConfig?.petName ?? '小铭同学',
         voiceId: petConfig?.voiceId ?? 'zh_female_vv_uranus_bigtts',
         unreadMessagesCount: unreadMsgs.length,

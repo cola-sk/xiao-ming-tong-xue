@@ -894,6 +894,7 @@
           <div class="settings-row"><strong>声音</strong><span id="volumeLabel">音量：80%</span></div>
           <input id="volumeControl" class="volume-control" type="range" min="0" max="100" value="80" aria-label="音量" />
         </div>
+        <div class="settings-card"><div class="settings-row"><strong>屏幕自动熄屏</strong><button class="pill scan-pill" id="screenTimeoutControl" aria-label="切换自动熄屏时间">30秒　›</button></div><div class="wifi-hint">触摸屏幕即可唤醒；熄屏时定时播报仍会运行</div></div>
         <div class="settings-card"><div class="settings-row"><strong>电池</strong><span>80%　充电中</span></div></div>
         <div class="settings-card wifi-card">
           <div class="settings-row"><strong>Wi-Fi 网络</strong><button class="pill scan-pill" id="scanWifi">扫描网络</button></div>
@@ -1309,6 +1310,8 @@
     $('forgetWifi').onclick = () => { savedWifi.delete(selectedWifi); if (connectedWifi === selectedWifi) connectedWifi = '';
       $('wifiPassword').value = ''; $('forgetWifi').hidden = true; $('wifiDetailStatus').textContent = '已忘记网络'; $('connectWifi').hidden = false; };
     $('volumeControl').oninput = (e) => { $('volumeLabel').textContent = '音量：' + e.target.value + '%'; };
+    const timeoutOptions = ['15秒', '30秒', '1分钟', '5分钟', '永不']; let timeoutIndex = 1;
+    $('screenTimeoutControl').onclick = () => { timeoutIndex = (timeoutIndex + 1) % timeoutOptions.length; $('screenTimeoutControl').textContent = timeoutOptions[timeoutIndex] + '　›'; };
     $('settingsOpen').onclick = () => { $('settingsScreen').hidden = false; renderWifi(); renderPopup(); };
     $('settingsClose').onclick = () => { $('settingsScreen').hidden = true; renderPopup(); };
     $('scanWifi').onclick = () => { scannedWifi = ['Home Wi-Fi', 'Guest Wi-Fi']; renderWifi(); };

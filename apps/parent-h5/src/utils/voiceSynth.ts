@@ -45,34 +45,25 @@ export async function requestDoubaoTtsAudio(params: {
   error?: string;
   configured?: boolean;
 }> {
-  try {
-    const res = await fetch('/api/v1/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || (!data.audioUrl && !data.audioDataUrl)) {
-      return {
-        ok: false,
-        error: data.error || '豆包 TTS 合成未返回音频',
-        configured: data.configured,
-      };
+  let lastError = '网络请求失败';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch('/api/v1/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || (!data.audioUrl && !data.audioDataUrl)) {
+        return { ok: false, error: data.error || '豆包 TTS 合成未返回音频', configured: data.configured };
+      }
+      return { ok: true, audioUrl: data.audioUrl, audioDataUrl: data.audioDataUrl, audioMd5: data.audioMd5, fromCache: data.fromCache, configured: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : '网络请求失败';
+      if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
     }
-    return {
-      ok: true,
-      audioUrl: data.audioUrl,
-      audioDataUrl: data.audioDataUrl,
-      audioMd5: data.audioMd5,
-      fromCache: data.fromCache,
-      configured: true,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : '网络请求失败',
-    };
   }
+  return { ok: false, error: `语音合成请求失败：${lastError}，请重试` };
 }
 
 export function playAudioOrFallback(

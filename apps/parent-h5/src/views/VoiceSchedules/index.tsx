@@ -12,7 +12,7 @@ import { playAudioStrict, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const VoiceSchedulesPage: React.FC = () => {
   const {
-    schedules, devices, schedulesDeviceId,
+    schedules, devices, schedulesDeviceId, schedulesLoaded, schedulesError,
     voiceClones,
     updateSchedule,
     toggleSchedule,
@@ -177,7 +177,8 @@ export const VoiceSchedulesPage: React.FC = () => {
       {/* 定时任务列表 */}
       {schedules.length === 0 ? (
         <div className="kid-card text-center py-6">
-          <Empty description={schedulesDeviceId !== 'all' ? '正在加载定时任务…' : '暂无定时语音任务，点击右上角新建'} />
+          <Empty description={!schedulesLoaded ? '正在加载定时任务…' : schedulesError || '暂无定时语音任务，点击右上角新建'} />
+          {schedulesLoaded && schedulesError && <button type="button" onClick={() => void syncSchedulesFromServer()} className="kid-btn kid-btn-ghost kid-btn-sm mt-2">重新加载</button>}
         </div>
       ) : (
         <div className="space-y-2.5">

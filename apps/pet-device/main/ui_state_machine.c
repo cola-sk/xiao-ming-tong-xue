@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "nvs.h"
 #include "bsp/esp-bsp.h"
 #include "esp_lv_adapter_input.h"
 #include "esp_lv_adapter.h"
@@ -130,6 +131,71 @@ static lv_obj_t *s_battery_label;
 static unsigned s_battery_ticks;
 static unsigned s_anim_phase;
 static bool s_display_off;
+static lv_obj_t *s_wake_overlay, *s_screen_timeout_label;
+static const uint16_t s_screen_timeout_choices[] = { 15, 30, 60, 300, 0 };
+static uint16_t s_screen_timeout_sec = 30; // 0 keeps the screen on
+
+static void screen_timeout_load(void) {
+    nvs_handle_t nvs;
+    uint16_t value;
+    if (nvs_open("pet_screen", NVS_READONLY, &nvs) != ESP_OK) return;
+    if (nvs_get_u16(nvs, "timeout", &value) == ESP_OK) {
+        for (size_t i = 0; i < sizeof(s_screen_timeout_choices) / sizeof(s_screen_timeout_choices[0]); i++) {
+            if (value == s_screen_timeout_choices[i]) { s_screen_timeout_sec = value; break; }
+        }
+    }
+    nvs_close(nvs);
+}
+
+static void screen_timeout_label_update(void) {
+    if (!s_screen_timeout_label) return;
+    if (s_screen_timeout_sec == 0) lv_label_set_text(s_screen_timeout_label, "熄屏：永不");
+    else if (s_screen_timeout_sec >= 60) lv_label_set_text_fmt(s_screen_timeout_label, "熄屏：%d分钟", s_screen_timeout_sec / 60);
+    else lv_label_set_text_fmt(s_screen_timeout_label, "熄屏：%d秒", s_screen_timeout_sec);
+}
+
+static void screen_timeout_event(lv_event_t *event) {
+    (void)event;
+    size_t count = sizeof(s_screen_timeout_choices) / sizeof(s_screen_timeout_choices[0]);
+    size_t i = 0;
+    while (i < count && s_screen_timeout_choices[i] != s_screen_timeout_sec) i++;
+    uint16_t next = s_screen_timeout_choices[(i + 1) % count];
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open("pet_screen", NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_u16(nvs, "timeout", next);
+        if (err == ESP_OK) err = nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) { ESP_LOGW(TAG, "Cannot save screen timeout: %s", esp_err_to_name(err)); return; }
+    s_screen_timeout_sec = next;
+    screen_timeout_label_update();
+    lv_display_trigger_activity(NULL);
+}
+
+// Only the AMOLED brightness changes; tasks, Wi-Fi and the RTC keep running.
+static void screen_wake(bool keep_overlay) {
+    if (s_display_off && bsp_display_brightness_set(100) != ESP_OK) return;
+    s_display_off = false;
+    lv_indev_enable(pet_display_input(), true);
+    if (s_wake_overlay && !keep_overlay) lv_obj_set_hidden(s_wake_overlay, true);
+    lv_display_trigger_activity(NULL);
+}
+
+static void wake_overlay_event(lv_event_t *event) {
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) screen_wake(true);
+    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) lv_obj_set_hidden(s_wake_overlay, true);
+}
+
+static void screen_auto_off_update(void) {
+    if (s_display_off || !s_screen_timeout_sec || s_alarm_active || s_touch_started ||
+        audio_engine_is_busy() || chat_client_is_playing() || chat_client_is_uploading()) return;
+    if (lv_display_get_inactive_time(NULL) < (uint32_t)s_screen_timeout_sec * 1000U) return;
+    if (s_wake_overlay) { lv_obj_set_hidden(s_wake_overlay, false); lv_obj_move_foreground(s_wake_overlay); }
+    if (bsp_display_brightness_set(0) == ESP_OK) s_display_off = true;
+    else if (s_wake_overlay) lv_obj_set_hidden(s_wake_overlay, true);
+}
 
 static const char *const WEEKDAY_ZH[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
 
@@ -150,10 +216,10 @@ static void power_key_update(void) {
     if (!s_pmu || i2c_master_transmit_receive(s_pmu, &reg, 1, &status, 1, 20) != ESP_OK || !(status & 0x08)) return;
     uint8_t clear[] = { 0x49, 0x08 };
     if (i2c_master_transmit(s_pmu, clear, sizeof(clear), 20) != ESP_OK) return;
-    bool off = !s_display_off;
-    if (bsp_display_brightness_set(off ? 0 : 100) == ESP_OK) {
-        s_display_off = off;
-        lv_indev_enable(pet_display_input(), !off);
+    if (s_display_off) screen_wake(false);
+    else if (bsp_display_brightness_set(0) == ESP_OK) {
+        s_display_off = true;
+        if (s_wake_overlay) { lv_obj_set_hidden(s_wake_overlay, false); lv_obj_move_foreground(s_wake_overlay); }
     }
 }
 
@@ -874,6 +940,7 @@ static void anim_timer_cb(lv_timer_t *timer) {
 static void ui_tick_timer(lv_timer_t *timer) {
     (void)timer;
     power_key_update();
+    screen_auto_off_update();
     if (++s_battery_ticks >= 5) { battery_update(); s_battery_ticks = 0; }
 
     // 1. Top bar status
@@ -1474,6 +1541,13 @@ static void build_pairing_and_settings(lv_obj_t *screen) {
     lv_obj_align(battery_card, LV_ALIGN_TOP_LEFT, 16, 154);
     s_battery_label = make_label(battery_card, "电池  --     状态未知", &pet_font, COL_INK);
     lv_obj_align(s_battery_label, LV_ALIGN_LEFT_MID, 16, 0);
+    lv_obj_set_width(s_battery_label, 230);
+    lv_label_set_long_mode(s_battery_label, LV_LABEL_LONG_DOT);
+    lv_obj_t *screen_timeout = make_pill_btn(battery_card, 185, 40, 18, COL_AI_TINT, COL_AI_DARK,
+                                              "熄屏：30秒", LV_EVENT_CLICKED, screen_timeout_event, NULL);
+    lv_obj_align(screen_timeout, LV_ALIGN_RIGHT_MID, -8, 0);
+    s_screen_timeout_label = lv_obj_get_child(screen_timeout, 0);
+    screen_timeout_label_update();
 
     lv_obj_t *wifi_card = make_panel(s_settings, 448, 238, 20, COL_CARD, COL_BORDER, 1);
     lv_obj_align(wifi_card, LV_ALIGN_TOP_LEFT, 16, 220);
@@ -1535,6 +1609,7 @@ void ui_state_init(void) {
     lv_obj_set_style_text_color(screen, lv_color_hex(COL_INK), 0);
     lv_obj_set_scrollable(screen, false);
 
+    screen_timeout_load();
     build_home_view(screen);
     build_ai_view(screen);
     build_schedule_view(screen);
@@ -1542,6 +1617,16 @@ void ui_state_init(void) {
     build_alarm_overlay(screen);
     build_msg_popup(screen);
     build_pairing_and_settings(screen);
+
+    s_wake_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_wake_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(s_wake_overlay, 0, 0);
+    lv_obj_set_style_bg_opa(s_wake_overlay, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_wake_overlay, 0, 0);
+    lv_obj_set_scrollable(s_wake_overlay, false);
+    lv_obj_set_clickable(s_wake_overlay, true);
+    lv_obj_add_event_cb(s_wake_overlay, wake_overlay_event, LV_EVENT_ALL, NULL);
+    lv_obj_set_hidden(s_wake_overlay, true);
 
     battery_init();
     battery_update();
@@ -1556,6 +1641,7 @@ void ui_state_init(void) {
 
 void ui_switch_page(pet_page_t page) {
     if (s_home_view && esp_lv_adapter_lock(1000) == ESP_OK) {
+        screen_wake(false);
         show_page(page);
         esp_lv_adapter_unlock();
     }
@@ -1603,6 +1689,7 @@ void ui_on_side_boot_key_hold_end(void) { audio_engine_end_hold(AUDIO_TARGET_AI)
 void ui_trigger_alarm_modal(const char *id, const char *title, const char *path) {
     (void)path;
     if (!s_alarm_panel || esp_lv_adapter_lock(1000) != ESP_OK) return;
+    screen_wake(false);
     s_alarm_active = true;
     snprintf(s_alarm_id, sizeof(s_alarm_id), "%s", id ? id : "");
 
