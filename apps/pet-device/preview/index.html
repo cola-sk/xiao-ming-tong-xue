@@ -691,6 +691,22 @@
       flex-direction: column;
       gap: 10px;
     }
+    .settings-card { background:#fff; border:1px solid #DCEBE1; border-radius:20px; padding:16px; }
+    .settings-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .settings-row strong { color:#1E2E2B; }
+    .settings-row span, .wifi-hint { color:#627873; font-size:13px; }
+    .settings-screen input.volume-control { display:block; width:100%; padding:0; margin:22px 0 4px; accent-color:#1E9E68; }
+    .wifi-items { overflow:auto; display:flex; flex-direction:column; gap:5px; }
+    .wifi-item { border:0; border-radius:12px; background:#F6FBF7; padding:12px; display:flex; justify-content:space-between; font:inherit; text-align:left; cursor:pointer; }
+    .wifi-item span { color:#1E9E68; }
+    .wifi-card { flex:1; display:flex; flex-direction:column; gap:14px; }
+    .wifi-current { color:#157B50; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .wifi-fields { display:flex; flex-direction:column; gap:12px; }
+    .wifi-fields[hidden] { display:none; }
+    .wifi-hint { margin-top:auto; }
+    .settings-screen .pill.scan-pill { background:#EAF6FF; color:#1567A8; }
+    .settings-screen .pill.forget-pill { background:#FEF2F2; color:#DC2626; flex:none; }
+    .settings-screen .pill.connect-pill { background:#1E9E68; flex:none; }
     .settings-screen select, .settings-screen input {
       width: 100%;
       padding: 9px 12px;
@@ -874,12 +890,23 @@
           <span class="sub-title">设备设置</span>
           <button class="back-btn" id="settingsClose" style="background:#E2E8F0;color:#1E2E2B;">✕</button>
         </div>
-        <div style="font-size:13px;color:#627873;">当前音量：80%（家长端设置）</div>
-        <button class="pill" id="scanWifi">Scan Wi-Fi</button>
-        <div id="wifiHint" style="font-size:13px;color:#627873;">扫描附近 Wi-Fi</div>
-        <select id="wifiSelect"><option value="">--</option></select>
-        <input id="wifiPassword" type="password" placeholder="Wi-Fi password" />
-        <button class="pill" id="connectWifi" style="background:#2DBE7E;">Connect</button>
+        <div class="settings-card">
+          <div class="settings-row"><strong>声音</strong><span id="volumeLabel">音量：80%</span></div>
+          <input id="volumeControl" class="volume-control" type="range" min="0" max="100" value="80" aria-label="音量" />
+        </div>
+        <div class="settings-card"><div class="settings-row"><strong>电池</strong><span>80%　充电中</span></div></div>
+        <div class="settings-card wifi-card">
+          <div class="settings-row"><strong>Wi-Fi 网络</strong><button class="pill scan-pill" id="scanWifi">扫描网络</button></div>
+          <div id="wifiHint" class="wifi-hint">点击网络查看详情</div>
+          <div id="wifiItems" class="wifi-items"></div>
+        </div>
+        <div id="wifiDetail" class="settings-screen" hidden>
+          <div class="settings-row"><button class="pill scan-pill" id="wifiBack">返回</button><strong id="wifiDetailTitle"></strong></div>
+          <div id="wifiDetailStatus" class="wifi-hint"></div>
+          <label for="wifiPassword">Wi-Fi 密码</label>
+          <input id="wifiPassword" type="text" placeholder="输入 Wi-Fi 密码" />
+          <div class="settings-row"><button class="pill connect-pill" id="connectWifi">连接</button><button class="pill forget-pill" id="forgetWifi">忘记网络</button></div>
+        </div>
       </section>
     </main>
   </div>
@@ -1262,16 +1289,33 @@
     $('aiRetryBtn').onclick = runAiReply;
     $('chatRetryBtn').onclick = runAiReply;
 
-    // Settings
-    $('settingsOpen').onclick = () => { $('settingsScreen').hidden = false; renderPopup(); };
+    // Settings preview uses sample networks, independent from device storage.
+    const savedWifi = new Map([['Home Wi-Fi', 'samplepass']]);
+    let connectedWifi = 'Home Wi-Fi', selectedWifi = '', scannedWifi = [];
+    function renderWifi() {
+      const names = [...new Set([connectedWifi, ...savedWifi.keys(), ...scannedWifi].filter(Boolean))];
+      $('wifiItems').replaceChildren(...names.map(name => {
+        const button = document.createElement('button'); button.className = 'wifi-item';
+        button.append(document.createTextNode(name));
+        const mark = document.createElement('span'); mark.textContent = name === connectedWifi ? '✓' : '›'; button.append(mark);
+        button.onclick = () => { selectedWifi = name; $('wifiDetailTitle').textContent = name;
+          $('wifiDetailStatus').textContent = name === connectedWifi ? '已连接' : savedWifi.has(name) ? '已保存' : '可连接';
+          $('wifiPassword').value = savedWifi.get(name) || ''; $('forgetWifi').hidden = !savedWifi.has(name);
+          $('connectWifi').hidden = name === connectedWifi; $('wifiDetail').hidden = false; };
+        return button;
+      }));
+    }
+    $('wifiBack').onclick = () => { $('wifiDetail').hidden = true; renderWifi(); };
+    $('forgetWifi').onclick = () => { savedWifi.delete(selectedWifi); if (connectedWifi === selectedWifi) connectedWifi = '';
+      $('wifiPassword').value = ''; $('forgetWifi').hidden = true; $('wifiDetailStatus').textContent = '已忘记网络'; $('connectWifi').hidden = false; };
+    $('volumeControl').oninput = (e) => { $('volumeLabel').textContent = '音量：' + e.target.value + '%'; };
+    $('settingsOpen').onclick = () => { $('settingsScreen').hidden = false; renderWifi(); renderPopup(); };
     $('settingsClose').onclick = () => { $('settingsScreen').hidden = true; renderPopup(); };
-    $('scanWifi').onclick = () => {
-      $('wifiSelect').replaceChildren(new Option('Home Wi-Fi', 'Home Wi-Fi'), new Option('Guest Wi-Fi', 'Guest Wi-Fi'));
-      $('wifiHint').textContent = '请选择 Wi-Fi';
-    };
+    $('scanWifi').onclick = () => { scannedWifi = ['Home Wi-Fi', 'Guest Wi-Fi']; renderWifi(); };
     $('connectWifi').onclick = () => {
-      if (!$('wifiSelect').value) { $('wifiHint').textContent = '请先扫描并选择网络'; return; }
-      $('wifiHint').textContent = '已连接 ' + $('wifiSelect').value;
+      if (!savedWifi.has(selectedWifi) && savedWifi.size >= 10) { $('wifiDetailStatus').textContent = '已保存 10 个网络，请先忘记一个'; return; }
+      savedWifi.set(selectedWifi, $('wifiPassword').value); connectedWifi = selectedWifi;
+      $('wifiDetailStatus').textContent = '已连接'; $('forgetWifi').hidden = false; $('connectWifi').hidden = true;
       $('wifiState').textContent = '📶 在线';
     };
 

@@ -7,6 +7,7 @@
 typedef enum { AUDIO_TARGET_AI, AUDIO_TARGET_PARENT } audio_target_t;
 void audio_engine_init(void);
 void audio_engine_set_volume(uint8_t volume_percent);
+void audio_engine_set_remote_volume(uint8_t volume_percent);
 uint8_t audio_engine_get_volume(void);
 void audio_engine_stop_playback(void);
 unsigned audio_engine_get_stop_generation(void);

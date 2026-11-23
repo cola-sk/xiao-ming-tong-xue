@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   listDevicesWithStatus,
   updateDeviceVolume,
+  updateDeviceAutoPlay,
   deleteDeviceById,
 } from '@/server/deviceStore';
 
@@ -33,6 +34,13 @@ export async function POST(request: NextRequest) {
   const action = String(body.action || 'bind');
 
   try {
+    if (action === 'autoPlay') {
+      const deviceId = String(body.deviceId || '').trim();
+      if (!deviceId || typeof body.enabled !== 'boolean') return NextResponse.json({ error: '参数无效' }, { status: 400 });
+      const device = await updateDeviceAutoPlay(deviceId, body.enabled);
+      if (!device) return NextResponse.json({ error: '设备不存在' }, { status: 404 });
+      return NextResponse.json({ status: 'ok', device });
+    }
     if (action === 'volume') {
       const deviceId = String(body.deviceId || '').trim();
       const volumeLevel = Number(body.volumeLevel);

@@ -23,6 +23,8 @@ bool wifi_manager_wait_connected(uint32_t timeout_ms);
  * Return true if Wi-Fi currently has an active IP connection.
  */
 bool wifi_manager_is_connected(void);
+/** Copy the connected network name, or return false when disconnected. */
+bool wifi_manager_get_ssid(char *ssid, size_t size);
 void wifi_manager_log_server_address(void);
 
 /**
@@ -46,3 +48,8 @@ const char *wifi_manager_get_mac_str(void);
 
 esp_err_t wifi_manager_scan(wifi_ap_record_t *records, uint16_t *count);
 esp_err_t wifi_manager_connect(const char *ssid, const char *password);
+#define WIFI_SAVED_MAX 10
+size_t wifi_manager_saved_count(void);
+bool wifi_manager_saved_at(size_t index, char *ssid, size_t size);
+bool wifi_manager_get_saved(const char *ssid, char *password, size_t size);
+esp_err_t wifi_manager_forget(const char *ssid);

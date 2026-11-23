@@ -2,6 +2,7 @@ import { deviceAccess } from '@/server/deviceAccess';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listChatMessages,
+  countUnreadByDevice,
   createChatMessage,
   markChatMessagePlayed,
   ChatMessageConflictError,
@@ -16,6 +17,13 @@ export const dynamic = 'force-dynamic';
  * - PATCH: 标记消息已读 (`played`) 并触发清空临时中转音频
  */
 export async function GET(request: NextRequest) {
+  if (request.nextUrl.searchParams.get('summary') === 'unread') {
+    const access = await deviceAccess(request, 'all');
+    if (access.error) return access.error;
+    if (access.deviceId) return NextResponse.json({ error: '仅家长可查看汇总' }, { status: 403 });
+    try { return NextResponse.json({ counts: await countUnreadByDevice() }); }
+    catch { return NextResponse.json({ error: '获取未读数失败' }, { status: 500 }); }
+  }
   const requestedId = request.nextUrl.searchParams.get('deviceId') || undefined;
   const access = await deviceAccess(request, requestedId);
   if (access.error) return access.error;

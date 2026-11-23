@@ -23,12 +23,11 @@ function playRecordedAudio(url: string): Promise<void> {
 
 export const WeChatVoicePage: React.FC = () => {
   const {
-    messages,
+    messages, messagesDeviceId, configDeviceId,
     aiLogs,
     devices,
     selectedDeviceId,
     petConfig,
-    autoPlayOnDevice,
     parentRole,
     sendParentVoiceMessage,
     markMessagePlayed,
@@ -60,7 +59,8 @@ export const WeChatVoicePage: React.FC = () => {
   }, [syncDevicesFromServer, syncMessagesFromServer, syncPetAiFromServer]);
 
   const currentDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
-  const visibleMessages = messages;
+  const autoPlayOnDevice = currentDevice?.autoPlayOnDevice ?? false;
+  const visibleMessages = messages.filter(m => m.deviceId === selectedDeviceId);
 
   const [playingId, setPlayingId] = useState<string>('');
   const [recordState, setRecordState] = useState<'idle' | 'starting' | 'recording' | 'sending'>('idle');
@@ -194,6 +194,7 @@ export const WeChatVoicePage: React.FC = () => {
   };
 
   const startRecord = async () => {
+    if (!selectedDeviceId) { Toast.show({ content: '请先配对设备' }); return; }
     if (startRef.current || recordState !== 'idle') return;
     startRef.current = true;
     setRecordState('starting');
@@ -245,6 +246,7 @@ export const WeChatVoicePage: React.FC = () => {
       url = recording.url;
       const duration = Math.max(1, Math.ceil(durationMs / 1000));
       await sendParentVoiceMessage({
+        deviceId: selectedDeviceId,
         senderName: currentRole,
         asrText: textInput.trim() || `（${duration}秒原声语音）`,
         durationSec: duration,
@@ -276,6 +278,7 @@ export const WeChatVoicePage: React.FC = () => {
     const duration = Math.max(2, Math.min(15, Math.ceil(textInput.trim().length / 4)));
     try {
     await sendParentVoiceMessage({
+      deviceId: selectedDeviceId,
       senderName: currentRole,
       asrText: textInput.trim(),
       durationSec: duration,
@@ -334,6 +337,7 @@ export const WeChatVoicePage: React.FC = () => {
         </div>
       </div>
 
+      <p className="text-xs text-[#77786F] px-1 pb-2">发送给：{currentDevice?.alias || '请先配对设备'} · {autoPlayOnDevice ? '收到后直接播放' : '孩子点击后播放'}</p>
       {/* 子标签页切换：亲子聊 / AI聊天记录 */}
       <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#EAE8E1]/75 shrink-0 mb-2">
         <button
@@ -381,7 +385,7 @@ export const WeChatVoicePage: React.FC = () => {
             >
               {visibleMessages.length === 0 ? (
                 <div className="h-full min-h-[160px] flex items-center justify-center text-center p-6 text-xs text-[#929187]">
-                  暂无亲子聊记录，点击下方录音给宝贝发送语音
+                  {selectedDeviceId && messagesDeviceId !== selectedDeviceId ? '正在加载聊天记录…' : '暂无亲子聊记录，点击下方录音给宝贝发送语音'}
                 </div>
               ) : (
                 visibleMessages.map(msg => {
@@ -549,7 +553,7 @@ export const WeChatVoicePage: React.FC = () => {
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-0.5">
             {aiLogs.length === 0 ? (
               <div className="rounded-2xl bg-white/90 text-center py-8 text-xs text-[#8B8A80] shadow-[0_1px_4px_rgba(36,38,32,0.04)]">
-                暂无 AI 聊天记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里
+                {selectedDeviceId && configDeviceId !== selectedDeviceId ? '正在加载 AI 聊天记录…' : '暂无 AI 聊天记录，孩子在设备端按住屏幕与宠物对话后将同步显示在这里'}
               </div>
             ) : (
               aiLogs.map(log => (

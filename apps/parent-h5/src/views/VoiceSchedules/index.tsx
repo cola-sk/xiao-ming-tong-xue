@@ -12,7 +12,7 @@ import { playAudioStrict, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const VoiceSchedulesPage: React.FC = () => {
   const {
-    schedules,
+    schedules, selectedDeviceId, schedulesDeviceId,
     voiceClones,
     updateSchedule,
     toggleSchedule,
@@ -32,6 +32,7 @@ export const VoiceSchedulesPage: React.FC = () => {
   const [editMode, setEditMode] = useState<ScheduleModalMode>('create');
 
   const handleCreate = () => {
+    if (!selectedDeviceId) { Toast.show({ content: '请先配对设备' }); return; }
     setEditingSchedule(null);
     setEditMode('create');
     setModalVisible(true);
@@ -165,7 +166,7 @@ export const VoiceSchedulesPage: React.FC = () => {
       {/* 定时任务列表 */}
       {schedules.length === 0 ? (
         <div className="kid-card text-center py-6">
-          <Empty description="暂无定时语音任务，点击右上角新建" />
+          <Empty description={selectedDeviceId && schedulesDeviceId !== selectedDeviceId ? '正在加载定时任务…' : '暂无定时语音任务，点击右上角新建'} />
         </div>
       ) : (
         <div className="space-y-2.5">

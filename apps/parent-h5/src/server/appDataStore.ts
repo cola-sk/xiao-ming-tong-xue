@@ -563,6 +563,20 @@ export async function listChatMessages(params?: {
   }).slice(0, params?.limit);
 }
 
+export async function countUnreadByDevice(): Promise<Record<string, number>> {
+  const sql = getNeonSql();
+  if (sql) {
+    await ensureNeonSchema();
+    const rows = await sql`SELECT device_id, COUNT(*)::int AS count FROM chat_voice_messages WHERE direction = 'device_to_parent' AND status = 'unread' GROUP BY device_id`;
+    return Object.fromEntries(rows.map(row => [String(row.device_id), Number(row.count)]));
+  }
+  const counts: Record<string, number> = {};
+  for (const message of memChatMessages.values()) {
+    if (message.direction === 'device_to_parent' && message.status === 'unread') counts[message.deviceId] = (counts[message.deviceId] || 0) + 1;
+  }
+  return counts;
+}
+
 const memTransientAudio = new Map<string, { base64: string; mimeType: string }>();
 
 export class ChatMessageConflictError extends Error {}

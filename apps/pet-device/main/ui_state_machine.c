@@ -111,27 +111,66 @@ static chat_play_phase_t s_popup_last_phase = CHAT_PLAY_IDLE;
 
 // Pairing & Settings overlays
 static lv_obj_t *s_pairing_panel, *s_pairing_code, *s_pairing_status;
-static lv_obj_t *s_settings, *s_wifi_list, *s_wifi_status, *s_password, *s_keyboard, *s_volume;
-static wifi_ap_record_t s_aps[12];
+static lv_obj_t *s_settings, *s_wifi_list, *s_wifi_status, *s_password, *s_keyboard, *s_volume, *s_volume_slider;
+static lv_obj_t *s_wifi_connect, *s_wifi_forget, *s_wifi_detail, *s_wifi_detail_title, *s_wifi_detail_status;
+typedef struct { char ssid[33]; bool nearby; bool open; } wifi_item_t;
+static wifi_item_t s_wifi_items[WIFI_SAVED_MAX + 33];
+static unsigned s_wifi_item_count, s_wifi_selected;
+static wifi_ap_record_t s_aps[32];
 static uint16_t s_ap_count;
 static bool s_wifi_working;
+static void wifi_list_refresh(void);
 
 // Hardware battery PMU
 static i2c_master_dev_handle_t s_pmu;
 static atomic_int s_battery = -1;
+// -1: unknown, 0: not charging, 1: charging, 2: battery absent.
+static atomic_int s_charging = -1;
+static lv_obj_t *s_battery_label;
 static unsigned s_battery_ticks;
 static unsigned s_anim_phase;
+static bool s_display_off;
 
 static const char *const WEEKDAY_ZH[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
 
 static void battery_init(void) {
     i2c_device_config_t cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = 0x34, .scl_speed_hz = 100000 };
-    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, &s_pmu) != ESP_OK) s_pmu = NULL;
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, &s_pmu) != ESP_OK) { s_pmu = NULL; return; }
+    // AXP2101 PWR short-press interrupt: status 0x49, bit 3 (write 1 to clear).
+    uint8_t reg = 0x41, enabled = 0;
+    if (i2c_master_transmit_receive(s_pmu, &reg, 1, &enabled, 1, 20) == ESP_OK) {
+        uint8_t clear[] = { 0x49, 0x08 }, enable[] = { 0x41, (uint8_t)(enabled | 0x08) };
+        i2c_master_transmit(s_pmu, clear, sizeof(clear), 20);
+        i2c_master_transmit(s_pmu, enable, sizeof(enable), 20);
+    }
+}
+
+static void power_key_update(void) {
+    uint8_t reg = 0x49, status = 0;
+    if (!s_pmu || i2c_master_transmit_receive(s_pmu, &reg, 1, &status, 1, 20) != ESP_OK || !(status & 0x08)) return;
+    uint8_t clear[] = { 0x49, 0x08 };
+    if (i2c_master_transmit(s_pmu, clear, sizeof(clear), 20) != ESP_OK) return;
+    bool off = !s_display_off;
+    if (bsp_display_brightness_set(off ? 0 : 100) == ESP_OK) {
+        s_display_off = off;
+        lv_indev_enable(pet_display_input(), !off);
+    }
 }
 
 static void battery_update(void) {
-    uint8_t reg = 0xa4, value;
-    if (s_pmu && i2c_master_transmit_receive(s_pmu, &reg, 1, &value, 1, 20) == ESP_OK && value <= 100) atomic_store(&s_battery, value);
+    uint8_t reg = 0x00, status[2];
+    if (!s_pmu || i2c_master_transmit_receive(s_pmu, &reg, 1, status, sizeof(status), 20) != ESP_OK) {
+        atomic_store(&s_battery, -1); atomic_store(&s_charging, -1); return;
+    }
+    if (!(status[0] & 0x08)) {
+        atomic_store(&s_battery, -1); atomic_store(&s_charging, 2); return;
+    }
+    // AXP2101 status register 0x01 bits 7:5: 1 means battery charging.
+    unsigned state = status[1] >> 5;
+    atomic_store(&s_charging, state <= 2 ? (state == 1 ? 1 : 0) : -1);
+    uint8_t value;
+    reg = 0xa4;
+    if (i2c_master_transmit_receive(s_pmu, &reg, 1, &value, 1, 20) == ESP_OK && value <= 100) atomic_store(&s_battery, value);
     else atomic_store(&s_battery, -1);
 }
 
@@ -834,7 +873,8 @@ static void anim_timer_cb(lv_timer_t *timer) {
 
 static void ui_tick_timer(lv_timer_t *timer) {
     (void)timer;
-    if (++s_battery_ticks >= 50) { battery_update(); s_battery_ticks = 0; }
+    power_key_update();
+    if (++s_battery_ticks >= 5) { battery_update(); s_battery_ticks = 0; }
 
     // 1. Top bar status
     int bat = atomic_load(&s_battery);
@@ -848,7 +888,25 @@ static void ui_tick_timer(lv_timer_t *timer) {
     snprintf(net_txt, sizeof(net_txt), LV_SYMBOL_WIFI " %s   %s %s",
              wifi_manager_is_connected() ? "在线" : "未连", bat_sym, bat_txt);
     set_label_if_changed(s_home_net, s_cache_net, sizeof(s_cache_net), net_txt);
-    if (s_volume) lv_label_set_text_fmt(s_volume, "当前音量：%d%%（家长端设置）", audio_engine_get_volume());
+    if (s_battery_label) {
+        int charging = atomic_load(&s_charging);
+        const char *status = charging == 1 ? "充电中" : charging == 0 ? "未充电" : charging == 2 ? "未检测到电池" : "状态未知";
+        if (bat >= 0) lv_label_set_text_fmt(s_battery_label, "电池  %d%%     %s", bat, status);
+        else lv_label_set_text_fmt(s_battery_label, "电池  --     %s", status);
+    }
+    if (s_volume) {
+        lv_label_set_text_fmt(s_volume, "音量：%d%%", audio_engine_get_volume());
+        if (!lv_obj_has_state(s_volume_slider, LV_STATE_PRESSED)) lv_slider_set_value(s_volume_slider, audio_engine_get_volume(), LV_ANIM_OFF);
+    }
+
+    if (s_wifi_list && !s_wifi_working && !lv_obj_is_hidden(s_settings) && lv_obj_is_hidden(s_wifi_detail)) {
+        char connected[33] = {0}; static char last_connected[33];
+        wifi_manager_get_ssid(connected, sizeof(connected));
+        if (strcmp(last_connected, connected)) {
+            snprintf(last_connected, sizeof(last_connected), "%s", connected);
+            wifi_list_refresh();
+        }
+    }
 
     // 2. Clock & date
     time_t now = time(NULL);
@@ -952,45 +1010,113 @@ static void touch_poll_task(void *arg) {
     }
 }
 
+static void volume_event(lv_event_t *e) {
+    audio_engine_set_volume((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+    lv_label_set_text_fmt(s_volume, "音量：%d%%", audio_engine_get_volume());
+}
+
 // Settings overlay actions
+static void wifi_list_refresh(void);
+static void scan_event(lv_event_t *e);
 static void settings_close(lv_event_t *e) { (void)e; lv_obj_set_hidden(s_settings, true); update_incoming_popup(); }
-static void settings_open(lv_event_t *e) { (void)e; lv_obj_set_hidden(s_settings, false); lv_obj_move_foreground(s_settings); update_incoming_popup(); }
+static void settings_open(lv_event_t *e) {
+    (void)e; battery_update(); lv_obj_set_hidden(s_settings, false); lv_obj_set_hidden(s_wifi_detail, true);
+    wifi_list_refresh(); lv_obj_move_foreground(s_settings); update_incoming_popup();
+}
 static void keyboard_event(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
         lv_obj_set_hidden(s_keyboard, true);
-        lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 16, 240);
+        lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 30, 180);
     }
 }
 static void password_event(lv_event_t *e) {
-    (void)e;
-    lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 16, 56);
-    lv_obj_move_foreground(s_password);
-    lv_obj_set_hidden(s_keyboard, false);
-    lv_obj_move_foreground(s_keyboard);
+    (void)e; lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 30, 58);
+    lv_obj_move_foreground(s_password); lv_obj_set_hidden(s_keyboard, false); lv_obj_move_foreground(s_keyboard);
+}
+static void detail_back(lv_event_t *e) {
+    (void)e; lv_obj_set_hidden(s_keyboard, true); lv_textarea_set_text(s_password, "");
+    lv_obj_set_hidden(s_wifi_detail, true); wifi_list_refresh();
+}
+static void detail_refresh(void) {
+    if (s_wifi_selected >= s_wifi_item_count) return;
+    wifi_item_t *item = &s_wifi_items[s_wifi_selected];
+    char password[65] = {0}, current[33] = {0};
+    bool saved = wifi_manager_get_saved(item->ssid, password, sizeof(password));
+    bool connected = wifi_manager_get_ssid(current, sizeof(current)) && !strcmp(current, item->ssid);
+    lv_label_set_text(s_wifi_detail_title, item->ssid);
+    lv_label_set_text(s_wifi_detail_status, connected ? "已连接" : item->nearby ? (saved ? "已保存，可连接" : "可连接") : "已保存，不在附近");
+    lv_textarea_set_text(s_password, saved ? password : "");
+    memset(password, 0, sizeof(password));
+    lv_obj_set_hidden(s_password, item->open && !saved);
+    lv_obj_set_hidden(s_wifi_forget, !saved);
+    lv_obj_set_hidden(s_wifi_connect, connected || !item->nearby);
+}
+static void wifi_item_event(lv_event_t *e) {
+    if (s_wifi_working) return;
+    s_wifi_selected = (unsigned)(uintptr_t)lv_event_get_user_data(e);
+    if (s_wifi_selected >= s_wifi_item_count) return;
+    detail_refresh(); lv_obj_set_hidden(s_wifi_detail, false); lv_obj_move_foreground(s_wifi_detail);
+}
+static void wifi_list_refresh(void) {
+    if (!s_wifi_list || s_wifi_working) return;
+    lv_obj_clean(s_wifi_list); s_wifi_item_count = 0;
+    char ssid[33], current[33] = {0};
+    wifi_manager_get_ssid(current, sizeof(current));
+    if (current[0]) {
+        snprintf(s_wifi_items[0].ssid, sizeof(s_wifi_items[0].ssid), "%s", current);
+        s_wifi_items[0].nearby = true; s_wifi_items[0].open = false; s_wifi_item_count++;
+    }
+    for (unsigned i = 0; i < wifi_manager_saved_count(); i++) {
+        if (!wifi_manager_saved_at(i, ssid, sizeof(ssid))) continue;
+        bool duplicate = false;
+        for (unsigned j = 0; j < s_wifi_item_count; j++) if (!strcmp(s_wifi_items[j].ssid, ssid)) duplicate = true;
+        if (!duplicate) {
+            wifi_item_t *item = &s_wifi_items[s_wifi_item_count++];
+            snprintf(item->ssid, sizeof(item->ssid), "%s", ssid); item->nearby = false; item->open = false;
+        }
+    }
+    for (unsigned i = 0; i < s_ap_count; i++) {
+        unsigned j;
+        for (j = 0; j < s_wifi_item_count; j++) if (!strncmp(s_wifi_items[j].ssid, (char *)s_aps[i].ssid, 32)) break;
+        if (j == s_wifi_item_count && s_wifi_item_count < WIFI_SAVED_MAX + 33) {
+            wifi_item_t *item = &s_wifi_items[s_wifi_item_count++];
+            snprintf(item->ssid, sizeof(item->ssid), "%.*s", 32, s_aps[i].ssid);
+        }
+        if (j < s_wifi_item_count) { s_wifi_items[j].nearby = true; s_wifi_items[j].open = s_aps[i].authmode == WIFI_AUTH_OPEN; }
+    }
+    for (unsigned i = 0; i < s_wifi_item_count; i++) {
+        lv_obj_t *row = lv_button_create(s_wifi_list);
+        lv_obj_set_size(row, 400, 48); lv_obj_set_style_radius(row, 12, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xF6FBF7), 0); lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_add_event_cb(row, wifi_item_event, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+        lv_obj_t *name = make_label(row, s_wifi_items[i].ssid, &pet_font, COL_INK);
+        lv_obj_set_width(name, 305); lv_label_set_long_mode(name, LV_LABEL_LONG_DOT); lv_obj_align(name, LV_ALIGN_LEFT_MID, 12, 0);
+        lv_obj_t *mark = make_label(row, !strcmp(current, s_wifi_items[i].ssid) ? LV_SYMBOL_OK : LV_SYMBOL_RIGHT, &lv_font_montserrat_14, COL_GREEN);
+        lv_obj_align(mark, LV_ALIGN_RIGHT_MID, -15, 0);
+    }
 }
 static void scan_task(void *arg) {
-    (void)arg; uint16_t count = 12; wifi_ap_record_t records[12];
+    (void)arg; uint16_t count = 32; wifi_ap_record_t records[32];
     esp_err_t err = wifi_manager_scan(records, &count);
     if (esp_lv_adapter_lock(-1) == ESP_OK) {
-        s_ap_count = 0; char options[512] = {0}; size_t used = 0;
+        s_ap_count = 0;
         if (err == ESP_OK) for (int i = 0; i < count; i++) {
-            if (!records[i].ssid[0] || memchr(records[i].ssid, '\n', strnlen((char *)records[i].ssid, 32))) continue;
-            int n = snprintf(options + used, sizeof(options) - used, "%s%.*s", used ? "\n" : "", 32, records[i].ssid);
-            if (n < 0 || (size_t)n >= sizeof(options) - used) break;
-            s_aps[s_ap_count++] = records[i]; used += n;
+            if (!records[i].ssid[0]) continue;
+            s_aps[s_ap_count++] = records[i];
         }
-        lv_dropdown_set_options(s_wifi_list, used ? options : "--");
-        lv_label_set_text(s_wifi_status, err != ESP_OK ? "Scan failed; retry" : s_ap_count ? "Select Wi-Fi" : "No Wi-Fi found");
-        s_wifi_working = false; esp_lv_adapter_unlock();
+        s_wifi_working = false; wifi_list_refresh();
+        lv_label_set_text(s_wifi_status, err != ESP_OK ? "扫描失败，请重试" : count ? "点击网络查看详情" : "未找到附近网络");
+        esp_lv_adapter_unlock();
     }
     vTaskDelete(NULL);
 }
 static void scan_event(lv_event_t *e) {
     (void)e; if (s_wifi_working) return; s_wifi_working = true;
-    lv_label_set_text(s_wifi_status, "Scanning...");
-    if (xTaskCreate(scan_task, "wifi_scan", 6144, NULL, 4, NULL) != pdPASS) {
-        s_wifi_working = false; lv_label_set_text(s_wifi_status, "Scan failed; retry");
+    lv_label_set_text(s_wifi_status, "正在扫描附近网络...");
+    if (xTaskCreate(scan_task, "wifi_scan", 8192, NULL, 4, NULL) != pdPASS) {
+        s_wifi_working = false; lv_label_set_text(s_wifi_status, "扫描失败，请重试");
     }
 }
 typedef struct { char ssid[33]; char password[64]; } wifi_job_t;
@@ -998,21 +1124,28 @@ static void connect_task(void *arg) {
     wifi_job_t *job = arg; esp_err_t err = wifi_manager_connect(job->ssid, job->password);
     memset(job, 0, sizeof(*job)); free(job);
     if (esp_lv_adapter_lock(-1) == ESP_OK) {
-        lv_label_set_text(s_wifi_status, err == ESP_OK ? "Connected" : "Connection failed; retry");
-        s_wifi_working = false; esp_lv_adapter_unlock();
+        s_wifi_working = false;
+        if (err == ESP_OK) { detail_refresh(); lv_label_set_text(s_wifi_status, "连接成功"); }
+        else lv_label_set_text(s_wifi_detail_status, err == ESP_ERR_NO_MEM ? "已保存 10 个网络，请先忘记一个" : "连接失败，请检查密码");
+        esp_lv_adapter_unlock();
     }
     vTaskDelete(NULL);
 }
+static void forget_event(lv_event_t *e) {
+    (void)e; if (s_wifi_working || s_wifi_selected >= s_wifi_item_count) return;
+    esp_err_t err = wifi_manager_forget(s_wifi_items[s_wifi_selected].ssid);
+    if (err == ESP_OK) { detail_refresh(); lv_textarea_set_text(s_password, ""); lv_label_set_text(s_wifi_detail_status, "已忘记网络"); }
+    else lv_label_set_text(s_wifi_detail_status, "忘记失败，请重试");
+}
 static void connect_event(lv_event_t *e) {
-    (void)e; unsigned index = lv_dropdown_get_selected(s_wifi_list);
-    if (s_wifi_working || index >= s_ap_count) return;
+    (void)e; if (s_wifi_working || s_wifi_selected >= s_wifi_item_count) return;
     wifi_job_t *job = calloc(1, sizeof(*job)); if (!job) return;
-    memcpy(job->ssid, s_aps[index].ssid, 32);
-    snprintf(job->password, sizeof(job->password), "%s", lv_textarea_get_text(s_password));
-    lv_textarea_set_text(s_password, ""); lv_obj_set_hidden(s_keyboard, true); lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 16, 240);
-    s_wifi_working = true; lv_label_set_text(s_wifi_status, "Connecting...");
+    snprintf(job->ssid, sizeof(job->ssid), "%s", s_wifi_items[s_wifi_selected].ssid);
+    if (!s_wifi_items[s_wifi_selected].open) snprintf(job->password, sizeof(job->password), "%s", lv_textarea_get_text(s_password));
+    lv_obj_set_hidden(s_keyboard, true); lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 30, 180);
+    s_wifi_working = true; lv_label_set_text(s_wifi_detail_status, "正在连接...");
     if (xTaskCreate(connect_task, "wifi_connect", 6144, job, 4, NULL) != pdPASS) {
-        memset(job, 0, sizeof(*job)); free(job); s_wifi_working = false; lv_label_set_text(s_wifi_status, "Connection failed; retry");
+        memset(job, 0, sizeof(*job)); free(job); s_wifi_working = false; lv_label_set_text(s_wifi_detail_status, "连接失败，请重试");
     }
 }
 
@@ -1322,41 +1455,73 @@ static void build_pairing_and_settings(lv_obj_t *screen) {
                                     LV_SYMBOL_CLOSE, LV_EVENT_CLICKED, settings_close, NULL);
     lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -14, 12);
 
-    s_volume = make_label(s_settings, "当前音量：80%", &pet_font, COL_MUTED);
-    lv_obj_align(s_volume, LV_ALIGN_TOP_LEFT, 16, 66);
+    lv_obj_t *volume_card = make_panel(s_settings, 448, 84, 20, COL_CARD, COL_BORDER, 1);
+    lv_obj_align(volume_card, LV_ALIGN_TOP_LEFT, 16, 60);
+    lv_obj_t *volume_title = make_label(volume_card, "声音", &pet_font, COL_INK);
+    lv_obj_align(volume_title, LV_ALIGN_TOP_LEFT, 16, 14);
+    s_volume = make_label(volume_card, "音量：80%", &pet_font, COL_MUTED);
+    lv_obj_align(s_volume, LV_ALIGN_TOP_RIGHT, -16, 14);
+    s_volume_slider = lv_slider_create(volume_card);
+    lv_obj_set_size(s_volume_slider, 390, 12);
+    lv_obj_align(s_volume_slider, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_color(s_volume_slider, lv_color_hex(COL_GREEN), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_volume_slider, lv_color_hex(COL_GREEN), LV_PART_KNOB);
+    lv_slider_set_range(s_volume_slider, 0, 100);
+    lv_slider_set_value(s_volume_slider, audio_engine_get_volume(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(s_volume_slider, volume_event, LV_EVENT_VALUE_CHANGED, NULL);
 
-    lv_obj_t *scan = make_pill_btn(s_settings, 180, 44, 22, COL_AI, 0xFFFFFF,
-                                   "Scan Wi-Fi", LV_EVENT_CLICKED, scan_event, NULL);
-    lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16, 102);
+    lv_obj_t *battery_card = make_panel(s_settings, 448, 54, 18, COL_CARD, COL_BORDER, 1);
+    lv_obj_align(battery_card, LV_ALIGN_TOP_LEFT, 16, 154);
+    s_battery_label = make_label(battery_card, "电池  --     状态未知", &pet_font, COL_INK);
+    lv_obj_align(s_battery_label, LV_ALIGN_LEFT_MID, 16, 0);
 
-    s_wifi_status = make_label(s_settings, "Scan Wi-Fi", &pet_font, COL_MUTED);
-    lv_obj_align(s_wifi_status, LV_ALIGN_TOP_LEFT, 16, 154);
+    lv_obj_t *wifi_card = make_panel(s_settings, 448, 238, 20, COL_CARD, COL_BORDER, 1);
+    lv_obj_align(wifi_card, LV_ALIGN_TOP_LEFT, 16, 220);
+    lv_obj_t *wifi_title = make_label(wifi_card, "Wi-Fi 网络", &pet_font, COL_INK);
+    lv_obj_align(wifi_title, LV_ALIGN_TOP_LEFT, 16, 16);
+    lv_obj_t *scan = make_pill_btn(wifi_card, 128, 40, 20, COL_AI_TINT, COL_AI_DARK,
+                                   "扫描网络", LV_EVENT_CLICKED, scan_event, NULL);
+    lv_obj_align(scan, LV_ALIGN_TOP_RIGHT, -14, 10);
+    s_wifi_status = make_label(wifi_card, "点击扫描网络，或选择已保存网络", &pet_font, COL_MUTED);
+    lv_obj_set_width(s_wifi_status, 410); lv_label_set_long_mode(s_wifi_status, LV_LABEL_LONG_DOT);
+    lv_obj_align(s_wifi_status, LV_ALIGN_TOP_LEFT, 16, 58);
+    s_wifi_list = lv_obj_create(wifi_card);
+    lv_obj_set_size(s_wifi_list, 418, 133); lv_obj_align(s_wifi_list, LV_ALIGN_TOP_LEFT, 14, 98);
+    lv_obj_set_style_pad_all(s_wifi_list, 0, 0); lv_obj_set_style_pad_row(s_wifi_list, 5, 0);
+    lv_obj_set_style_border_width(s_wifi_list, 0, 0); lv_obj_set_style_bg_opa(s_wifi_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(s_wifi_list, LV_FLEX_FLOW_COLUMN); lv_obj_set_scroll_dir(s_wifi_list, LV_DIR_VER);
 
-    s_wifi_list = lv_dropdown_create(s_settings);
-    lv_obj_set_width(s_wifi_list, 320);
-    lv_dropdown_set_options(s_wifi_list, "--");
-    lv_obj_align(s_wifi_list, LV_ALIGN_TOP_LEFT, 16, 186);
-
-    s_password = lv_textarea_create(s_settings);
-    lv_obj_set_size(s_password, 320, 48);
-    lv_textarea_set_one_line(s_password, true);
-    lv_textarea_set_password_mode(s_password, true);
-    lv_textarea_set_max_length(s_password, 63);
-    lv_textarea_set_placeholder_text(s_password, "Wi-Fi password");
-    lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 16, 240);
+    s_wifi_detail = make_panel(s_settings, 480, 480, 0, COL_BG, COL_BG, 0);
+    lv_obj_set_clickable(s_wifi_detail, true);
+    lv_obj_t *back = make_pill_btn(s_wifi_detail, 84, 42, 21, 0xE2E8F0, COL_INK,
+                                   "返回", LV_EVENT_CLICKED, detail_back, NULL);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 16, 12);
+    s_wifi_detail_title = make_label(s_wifi_detail, "Wi-Fi", &pet_font, COL_INK);
+    lv_obj_set_width(s_wifi_detail_title, 340); lv_label_set_long_mode(s_wifi_detail_title, LV_LABEL_LONG_DOT);
+    lv_obj_align(s_wifi_detail_title, LV_ALIGN_TOP_LEFT, 115, 20);
+    s_wifi_detail_status = make_label(s_wifi_detail, "", &pet_font, COL_MUTED);
+    lv_obj_set_width(s_wifi_detail_status, 420); lv_label_set_long_mode(s_wifi_detail_status, LV_LABEL_LONG_WRAP);
+    lv_obj_align(s_wifi_detail_status, LV_ALIGN_TOP_LEFT, 30, 90);
+    lv_obj_t *password_title = make_label(s_wifi_detail, "Wi-Fi 密码", &pet_font, COL_INK);
+    lv_obj_align(password_title, LV_ALIGN_TOP_LEFT, 30, 144);
+    s_password = lv_textarea_create(s_wifi_detail);
+    lv_obj_set_size(s_password, 420, 48); lv_textarea_set_one_line(s_password, true);
+    lv_textarea_set_password_mode(s_password, false); lv_textarea_set_max_length(s_password, 63);
+    lv_textarea_set_placeholder_text(s_password, "输入 Wi-Fi 密码");
+    lv_obj_align(s_password, LV_ALIGN_TOP_LEFT, 30, 180);
     lv_obj_add_event_cb(s_password, password_event, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *connect = make_pill_btn(s_settings, 160, 48, 24, COL_GREEN, 0xFFFFFF,
-                                      "Connect", LV_EVENT_CLICKED, connect_event, NULL);
-    lv_obj_align(connect, LV_ALIGN_TOP_LEFT, 16, 308);
-
-    s_keyboard = lv_keyboard_create(s_settings);
+    s_wifi_connect = make_pill_btn(s_wifi_detail, 180, 48, 24, COL_GREEN, 0xFFFFFF,
+                                    "连接", LV_EVENT_CLICKED, connect_event, NULL);
+    lv_obj_align(s_wifi_connect, LV_ALIGN_TOP_LEFT, 30, 252);
+    s_wifi_forget = make_pill_btn(s_wifi_detail, 180, 48, 24, COL_RED_TINT, COL_RED_INK,
+                                  "忘记网络", LV_EVENT_CLICKED, forget_event, NULL);
+    lv_obj_align(s_wifi_forget, LV_ALIGN_TOP_RIGHT, -30, 252);
+    s_keyboard = lv_keyboard_create(s_wifi_detail);
     lv_keyboard_set_textarea(s_keyboard, s_password);
     lv_obj_set_style_text_font(s_keyboard, &lv_font_montserrat_14, 0);
-    lv_obj_set_size(s_keyboard, 448, 210);
-    lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_set_size(s_keyboard, 448, 210); lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, -6);
     lv_obj_add_event_cb(s_keyboard, keyboard_event, LV_EVENT_ALL, NULL);
-    lv_obj_set_hidden(s_keyboard, true);
+    lv_obj_set_hidden(s_keyboard, true); lv_obj_set_hidden(s_wifi_detail, true);
     lv_obj_set_hidden(s_settings, true);
 }
 
@@ -1411,7 +1576,7 @@ void ui_set_pairing_status(const char *code, const char *status) {
         lv_obj_set_hidden(s_pairing_panel, true);
     } else {
         lv_obj_set_hidden(s_pairing_panel, false);
-        lv_obj_move_foreground(s_pairing_panel);
+        if (lv_obj_is_hidden(s_settings)) lv_obj_move_foreground(s_pairing_panel);
         if (code) { lv_label_set_text(s_pairing_code, code); lv_obj_center(s_pairing_code); }
         if (status) lv_label_set_text(s_pairing_status, status);
     }

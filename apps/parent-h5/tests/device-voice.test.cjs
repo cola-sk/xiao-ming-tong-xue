@@ -92,3 +92,24 @@ test('AI authenticates before spending ASR or model calls', async () => {
   const api = ai({ '@/server/deviceAccess': { deviceAccess: async () => ({ error: NextResponse.json({ error: 'denied' }, { status: 401 }) }) }, '@/server/speechRecognition': { transcribeDeviceAudio: async () => { called = true; }, SpeechRecognitionError: class extends Error {} } });
   assert.equal((await api.POST(req({ audioBase64: validWav, responseFormat: 'mp3' }))).status, 401); assert.equal(called, false);
 });
+
+test('unread summary counts only unplayed child messages per device', async () => {
+  const store = loader()('src/server/appDataStore.ts');
+  const base = { senderName: 'Child', durationSec: 3, asrText: 'hi', autoPlay: false };
+  await store.createChatMessage({ ...base, id: 'a1', deviceId: 'a', direction: 'device_to_parent' });
+  await store.createChatMessage({ ...base, id: 'a2', deviceId: 'a', direction: 'device_to_parent' });
+  await store.createChatMessage({ ...base, id: 'b1', deviceId: 'b', direction: 'device_to_parent' });
+  await store.createChatMessage({ ...base, id: 'parent', deviceId: 'b', direction: 'parent_to_device' });
+  await store.markChatMessagePlayed('a1');
+  const counts = await store.countUnreadByDevice();
+  assert.equal(counts.a, 1); assert.equal(counts.b, 1);
+});
+
+test('device autoplay settings are independent', async () => {
+  const store = loader({ './devicePairing': { isDeviceBound: async () => true } })('src/server/deviceStore.ts');
+  for (const deviceId of ['a', 'b']) await store.registerDeviceFromParent({ deviceId, alias: deviceId, childNickname: 'child' });
+  await store.updateDeviceAutoPlay('a', true);
+  const devices = await store.listDevicesWithStatus();
+  assert.equal(devices.find(d => d.id === 'a').autoPlayOnDevice, true);
+  assert.equal(devices.find(d => d.id === 'b').autoPlayOnDevice, false);
+});

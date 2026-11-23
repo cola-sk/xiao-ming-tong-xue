@@ -12,6 +12,7 @@ import { VoiceCloneModal } from '../VoiceSchedules/VoiceCloneModal';
 export const PetAIConfigPage: React.FC = () => {
   const {
     petConfig,
+    devices, selectedDeviceId, configDeviceId,
     voiceClones,
     updatePetConfig,
     deleteVoiceCloneProfile,
@@ -108,6 +109,7 @@ export const PetAIConfigPage: React.FC = () => {
       Toast.show({ content: '请填写宠物名字' });
       return;
     }
+    if (!selectedDeviceId || configDeviceId !== selectedDeviceId) { Toast.show({ content: '请先选择设备并等待设置加载' }); return; }
     updatePetConfig({
       petName: petName.trim(),
       personaId: selectedPersonaId,
@@ -125,7 +127,7 @@ export const PetAIConfigPage: React.FC = () => {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <IconSparkle className="w-4 h-4 text-[#E85835] shrink-0" />
-              <h2 className="text-h2 text-[#242620]">我的声音管理</h2>
+              <h2 className="text-h2 text-[#242620]">家庭声音库（所有设备共享）</h2>
               <span className="kid-status-chip kid-status-new">已克隆 {voiceClones.length} 个音色</span>
             </div>
             <p className="text-caption text-[#77786F] mt-1">
@@ -205,10 +207,10 @@ export const PetAIConfigPage: React.FC = () => {
       </div>
 
       {/* 2. 小宠物声音与人设配置 */}
-      <form onSubmit={handleSaveConfig} className="kid-card space-y-3.5">
+      {selectedDeviceId && configDeviceId === selectedDeviceId ? <form onSubmit={handleSaveConfig} className="kid-card space-y-3.5">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-h2 text-[#1F2937]">小宠物声音与人设 ({petConfig.petName})</h2>
+            <h2 className="text-h2 text-[#1F2937]">{devices.find(d => d.id === selectedDeviceId)?.alias || '未选择设备'} · AI 伙伴设置</h2>
             <p className="text-caption text-[#77786F]">
               孩子按住设备触摸屏说话，松手即由大模型 + 萌宠 TTS 回复
             </p>
@@ -307,7 +309,7 @@ export const PetAIConfigPage: React.FC = () => {
         <button type="submit" className="w-full kid-btn kid-btn-primary kid-btn-md">
           保存 AI 宠物配置
         </button>
-      </form>
+      </form> : <div className="kid-card text-sm text-[#77786F]">{selectedDeviceId ? '正在加载当前设备的 AI 伙伴设置…' : '请先配对设备，再设置 AI 伙伴'}</div>}
 
       <VoiceCloneModal
         visible={cloneModalVisible}

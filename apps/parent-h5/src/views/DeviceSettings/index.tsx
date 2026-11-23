@@ -14,14 +14,15 @@ export const DeviceSettingsPage: React.FC = () => {
     syncDevicesFromServer,
     removeDevice,
     selectDevice,
-    petConfig,
+    petConfig, configDeviceId,
     updatePetConfig,
-    autoPlayOnDevice,
     setAutoPlayOnDevice,
     parentRole,
     setParentRole,
   } = useAppStore();
 
+  const currentDevice = devices.find(d => d.id === selectedDeviceId);
+  const autoPlayOnDevice = currentDevice?.autoPlayOnDevice ?? false;
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [pairingCode, setPairingCode] = useState('');
   const [alias, setAlias] = useState('');
@@ -65,6 +66,7 @@ export const DeviceSettingsPage: React.FC = () => {
   };
 
   const handleVolumeChange = (val: number) => {
+    if (!selectedDeviceId) return;
     updatePetConfig({ volumeLevel: val });
     if (selectedDeviceId) {
       fetch('/api/v1/device/status', {
@@ -226,7 +228,7 @@ export const DeviceSettingsPage: React.FC = () => {
       <section className="kid-card space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-h3 text-[#1F2937]">ES8311 喇叭音量控制</h3>
+            <h3 className="text-h3 text-[#1F2937]">{currentDevice?.alias || '未选择设备'} · 喇叭音量与播放设置</h3>
             <p className="text-xs text-[#6B7280]">调节 AI 回复、微聊语音及定时闹钟的外放音量</p>
           </div>
           <span className="font-mono font-bold text-sm text-[#E85835]">
@@ -235,6 +237,7 @@ export const DeviceSettingsPage: React.FC = () => {
         </div>
         <input
           type="range"
+          disabled={!selectedDeviceId || configDeviceId !== selectedDeviceId}
           min={10}
           max={100}
           step={5}
@@ -249,18 +252,18 @@ export const DeviceSettingsPage: React.FC = () => {
               亲子微聊语音直接外放
             </div>
             <p className="text-[11px] text-[#6B7280] mt-0.5 leading-relaxed">
-              仅对家长发送的微聊语音生效（不影响 AI 对话和定时提醒）。开启后设备收到即直接播报；关闭时仅响提示音并亮红点，需孩子点击播放。
+              仅对当前设备之后收到的微聊语音生效，不影响已发送的消息。开启后设备收到即直接播报；关闭时仅响提示音并亮红点，需孩子点击播放。
             </p>
           </div>
           <Switch
             checked={autoPlayOnDevice}
+            disabled={!selectedDeviceId}
             onChange={checked => {
-              setAutoPlayOnDevice(checked);
-              Toast.show({
+              void setAutoPlayOnDevice(checked).then(() => Toast.show({
                 content: checked
                   ? '已开启：家长微聊语音收到后直接外放'
                   : '已关闭：家长微聊语音需孩子点击收听',
-              });
+              })).catch(() => Toast.show({ content: '保存失败，请重试' }));
             }}
             style={{
               '--width': '38px',

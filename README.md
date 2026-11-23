@@ -22,12 +22,14 @@
 | 位置 | 丝印 / GPIO | 功能 |
 | --- | --- | --- |
 | 左 | IO18 / GPIO18 | 按住给家长录音，松开发送 |
-| 中 | PWR | 保留电源功能 |
+| 中 | PWR | 短按切换屏幕亮灭，长按保留电源功能 |
 | 右 | BOOT / GPIO0 | 按住问 AI，松开发送问题 |
 
 ![按键位置：设备背面，USB 接口朝下](docs/hardware-buttons.png)
 
 屏幕两个页面也有对应的按住按钮。录音范围为 **300 毫秒～15 秒**；轻点按键可能只录到 0.1～0.2 秒，出现“录音太短”属于正常保护。新录音会替换上一条待发录音；失败后可以直接重发，无需再说一遍。
+
+在设备首页进入“设置”，可将音量调至 0–100%；音量保存在设备上，家长端之后修改音量时也会生效。Wi-Fi 可在设置中扫描并选择网络，输入密码后连接；设备仅支持 2.4 GHz Wi-Fi。
 
 定时任务需先同步并下载音频，之后保持设备开机即可断网播放。点“知道了”停止提醒并确认；离线确认保存后等待联网补报。**未实现关机或深睡眠状态下的 RTC 唤醒。**
 
@@ -108,42 +110,46 @@ pnpm exec vercel --prod
 
 ### 工具链与首次配置
 
-使用 **ESP-IDF 5.5.2**，目标 `esp32s3`，Flash 16 MB、PSRAM 8 MB。微雪 BSP 依赖 ESP-IDF 5.5 及以上；不要用旧工具链沿用同一个构建目录。
+使用 **ESP-IDF 5.5.1**，目标 `esp32s3`，Flash 16 MB、PSRAM 8 MB。微雪 BSP 依赖 ESP-IDF 5.5 及以上；不要用旧工具链沿用同一个构建目录。
 
-先安装对应 IDF 和工具链，并将 `IDF_PATH` 指向该安装目录。本次本机工具链位于 `/tmp/ai-pet-esp-idf-5.5`，这是临时路径，重启/清理后可能不存在，不能作为长期安装约定。
+当前机器已验证的 ESP-IDF 5.5.1 源码目录为 `/tmp/ai-pet-idf-5.5`，工具链和 Python 环境位于 `~/.espressif/`。`/tmp` 是临时目录，系统清理或重启后可能消失；如果目录不存在，请重新安装 ESP-IDF 5.5.1，并将下面的路径改为实际安装目录。当前机器的 `/Users/liuzhe.x/esp/esp-idf` 是 5.4.2，不能用于这个项目。
+
+每次打开新终端都需要加载 5.5.1 环境。使用 `idf.py --version` 确认版本；切换 IDF 版本时使用新的构建目录，避免复用旧的 CMake 缓存。
 
 ```bash
 # 从仓库内执行，记录根目录后再进入固件工程
 PET_REPO_ROOT="$(git rev-parse --show-toplevel)"
-source "$IDF_PATH/export.sh"
+source /tmp/ai-pet-idf-5.5/export.sh
+idf.py --version  # 应显示 ESP-IDF v5.5.1
 cd "$PET_REPO_ROOT/apps/pet-device"
 
 # 仅首次配置目标时执行；日常刷固件不需要重复 set-target
-idf.py -B build-idf55 set-target esp32s3
-idf.py -B build-idf55 menuconfig
+idf.py -B build-check set-target esp32s3
+idf.py -B build-check menuconfig
 ```
 
-在 `AI Chat Pet (小铭同学) Configuration` 中设置 Wi-Fi 名称、密码和服务端 URL；URL 使用 `https://xiaoming.1203.fyi`，不带末尾 `/`。Wi-Fi 配网与业务绑定是两件事：**当前 Wi-Fi 仍通过固件配置，没有手机配网页面或设备上的 Wi-Fi 列表。**
+在 `AI Chat Pet (小铭同学) Configuration` 中设置 Wi-Fi 名称、密码和服务端 URL；URL 使用 `https://xiaoming.1203.fyi`，不带末尾 `/`。Wi-Fi 配网与业务绑定是两件事：固件配置是首次启动的默认网络，也可以在设备设置中扫描并连接其他 2.4 GHz Wi-Fi。
 
 `sdkconfig` 中包含本机 Wi-Fi 信息，已忽略入库；通用参数维护在 `sdkconfig.defaults`。不要把真实密码改成项目默认值。
 
 ### 日常刷新固件
 
-本次 macOS 串口是 `/dev/cu.usbmodem1101`，重新插拔后可能变化。Linux 通常为 `/dev/ttyACM*`，Windows 为 `COM*`，以当前系统识别结果为准。
+当前 macOS 串口是 `/dev/cu.usbmodem2101`，重新插拔后可能变化。Linux 通常为 `/dev/ttyACM*`，Windows 为 `COM*`，以当前系统识别结果为准。
 
 ```bash
-# 必须在 apps/pet-device 中执行
-source "$IDF_PATH/export.sh"
+# 必须在 apps/pet-device 中执行；按实际安装位置调整路径
+source /tmp/ai-pet-idf-5.5/export.sh
+idf.py --version
 
 # 正常固件明确关闭自动声音自检
-idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=OFF build
-idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash
-idf.py -B build-idf55 -p /dev/cu.usbmodem1101 monitor
+idf.py -B build-check -D PET_HARDWARE_SMOKE=OFF build
+idf.py -B build-check -p /dev/cu.usbmodem2101 flash
+idf.py -B build-check -p /dev/cu.usbmodem2101 monitor
 ```
 
 `monitor` 用 `Ctrl+]` 退出。**先关闭串口监听器，再烧录**，避免端口被占用。正常 `flash` 会刷新程序和分区表，不需要执行 `erase-flash`；保持 NVS 分区、服务端域名不变时，绑定凭据会保留。
 
-本次反复遇到的路径问题：从仓库根目录运行 `idf.py`，或者用 `-C apps/pet-device` 配合相对 `-B build-idf55`，容易生成错误位置的构建目录。最稳妥的办法是先 `cd apps/pet-device`，所有命令统一使用 `-B build-idf55`。也不要混用该目录与默认 `build/` 中的旧固件。
+本次反复遇到的路径问题：从仓库根目录运行 `idf.py`，或者用 `-C apps/pet-device` 配合相对 `-B build-check`，容易生成错误位置的构建目录。最稳妥的办法是先 `cd apps/pet-device`，所有命令统一使用 `-B build-check`。也不要混用该目录与默认 `build/` 中的旧固件。
 
 如果串口突然消失，先检查 USB 数据线、设备供电、按键是否松开和新端口名称，不要反复清空 NVS。需要清空凭据重新配对时，先在家长端解绑，再有针对性地处理设备状态。
 
@@ -151,7 +157,7 @@ idf.py -B build-idf55 -p /dev/cu.usbmodem1101 monitor
 
 | 区域 | 偏移 | 大小 / 用途 |
 | --- | --- | --- |
-| NVS | `0x9000` | 24 KB；配对凭据、提醒触发记录和待确认事件 |
+| NVS | `0x9000` | 24 KB；Wi-Fi、音量、配对凭据、提醒触发记录和待确认事件 |
 | PHY | `0xf000` | 4 KB |
 | Factory App | `0x10000` | 4 MB |
 | SPIFFS storage | `0x410000` | 11 MB；挂载 `/spiffs` |
@@ -327,12 +333,12 @@ cc -Wall -Wextra -Werror apps/pet-device/tests/schedule_rules_test.c -o /tmp/pet
 
 ```bash
 # apps/pet-device，已加载 IDF 环境
-idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=ON -D PET_SMOKE_MP3=/absolute/path/to/synthetic.mp3 build
-idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash monitor
+idf.py -B build-check -D PET_HARDWARE_SMOKE=ON -D PET_SMOKE_MP3=/absolute/path/to/synthetic.mp3 build
+idf.py -B build-check -p /dev/cu.usbmodem2101 flash monitor
 
 # 完成后必须关闭自检，重新构建并烧录正常固件
-idf.py -B build-idf55 -D PET_HARDWARE_SMOKE=OFF build
-idf.py -B build-idf55 -p /dev/cu.usbmodem1101 flash
+idf.py -B build-check -D PET_HARDWARE_SMOKE=OFF build
+idf.py -B build-check -p /dev/cu.usbmodem2101 flash
 ```
 
 可额外提供 `-D PET_SMOKE_PCM=/absolute/path/to/synthetic.pcm`，测试设备把 16 kHz、16-bit、单声道合成语音编码为 Opus 后请求 AI。此模式成功时也会外放回答。不要把声音自检固件作为正常固件交付。

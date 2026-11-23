@@ -42,7 +42,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       ? 'voice'
       : 'schedule'
     : 'create';
-  const { addSchedule, updateSchedule, petConfig, voiceClones } = useAppStore();
+  const { addSchedule, updateSchedule, petConfig, voiceClones, selectedDeviceId, devices } = useAppStore();
 
   const [title, setTitle] = useState('晚上刷牙睡觉提醒');
   const [timeStr, setTimeStr] = useState('20:30');
@@ -225,7 +225,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           audioMd5,
           repeatPlayCount,
           requireAck,
-        });
+        }, selectedDeviceId);
         Toast.show({
           icon: 'success',
           content: audioUrl
@@ -271,6 +271,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           </button>
         </div>
 
+        <p className="px-4 py-2 text-xs text-[#77786F]">目标设备：{devices.find(d => d.id === selectedDeviceId)?.alias || '未选择设备'}</p>
         {/* Body */}
         <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-3.5">
           {mode === 'schedule' && initialSchedule && (

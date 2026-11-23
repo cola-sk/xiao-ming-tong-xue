@@ -39,6 +39,8 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
 
+      await sql`ALTER TABLE devices ADD COLUMN IF NOT EXISTS auto_play_on_device BOOLEAN NOT NULL DEFAULT FALSE`;
+
       // 2. AI 宠物人设与音色配置表 (pet_ai_configs)
       await sql`
         CREATE TABLE IF NOT EXISTS pet_ai_configs (

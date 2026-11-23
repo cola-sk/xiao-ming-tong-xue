@@ -12,6 +12,7 @@ export interface DeviceRecord {
   batteryPercent: number;
   wifiRssi: number;
   volumeLevel: number;
+  autoPlayOnDevice: boolean;
   isOnline: boolean;
   lastSeenAt: string | null;
   createdAt: string;
@@ -41,6 +42,7 @@ function mapRow(row: Record<string, unknown>): DeviceRecord {
     batteryPercent: Number(row.battery_percent ?? 0),
     wifiRssi: Number(row.wifi_rssi ?? 0),
     volumeLevel: Number(row.volume_level ?? 80),
+    autoPlayOnDevice: Boolean(row.auto_play_on_device),
     isOnline: computeIsOnline(lastSeenAt),
     lastSeenAt,
     createdAt: row.created_at
@@ -105,6 +107,7 @@ export async function upsertDeviceHeartbeat(params: {
     batteryPercent: params.batteryPercent ?? existing?.batteryPercent ?? 100,
     wifiRssi: params.wifiRssi ?? existing?.wifiRssi ?? -50,
     volumeLevel: existing?.volumeLevel ?? 80,
+    autoPlayOnDevice: existing?.autoPlayOnDevice ?? false,
     isOnline: true,
     lastSeenAt: nowIso,
     createdAt: existing?.createdAt || nowIso,
@@ -156,6 +159,7 @@ export async function registerDeviceFromParent(params: {
     batteryPercent: existing?.batteryPercent ?? 0,
     wifiRssi: existing?.wifiRssi ?? 0,
     volumeLevel: existing?.volumeLevel ?? 80,
+    autoPlayOnDevice: existing?.autoPlayOnDevice ?? false,
     isOnline: existing ? computeIsOnline(existing.lastSeenAt) : false,
     lastSeenAt: existing?.lastSeenAt || null,
     createdAt: existing?.createdAt || nowIso,
@@ -226,4 +230,18 @@ export async function deleteDeviceById(deviceId: string): Promise<void> {
     return;
   }
   memoryDeviceMap.delete(deviceId);
+}
+
+export async function updateDeviceAutoPlay(deviceId: string, enabled: boolean): Promise<DeviceRecord | null> {
+  const sql = getNeonSql();
+  if (sql) {
+    await ensureNeonSchema();
+    const rows = await sql`UPDATE devices SET auto_play_on_device = ${enabled}, updated_at = NOW() WHERE id = ${deviceId} RETURNING *`;
+    return rows.length ? mapRow(rows[0] as Record<string, unknown>) : null;
+  }
+  const existing = memoryDeviceMap.get(deviceId);
+  if (!existing) return null;
+  const updated = { ...existing, autoPlayOnDevice: enabled };
+  memoryDeviceMap.set(deviceId, updated);
+  return updated;
 }

@@ -40,6 +40,7 @@ export interface Device {
   status: 'unpaired' | 'paired';
   firmwareVersion: string;
   batteryPercent: number;
+  autoPlayOnDevice: boolean;
   isOnline: boolean;
   lastSeenAt: string;
 }

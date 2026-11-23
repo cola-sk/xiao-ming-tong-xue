@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { SafeArea } from 'antd-mobile';
+import { SafeArea, Popup } from 'antd-mobile';
 import { useAppStore } from '../stores/useAppStore';
 import { BrandLogoXiaoming, IconMic, IconChatBubble, IconClock, IconDevice } from './Icons';
 
@@ -12,7 +12,21 @@ import { DeviceSettingsPage } from '../views/DeviceSettings';
 
 export const Layout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('wechat');
-  const { messages, schedules, parentRole, setParentRole } = useAppStore();
+  const { devices, selectedDeviceId, selectDevice, unreadCounts, schedules, parentRole, setParentRole, syncDevicesFromServer, syncUnreadCounts, syncMessagesFromServer, syncSchedulesFromServer, syncPetAiFromServer } = useAppStore();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const currentDevice = devices.find(d => d.id === selectedDeviceId);
+  useEffect(() => {
+    void syncDevicesFromServer();
+    void syncUnreadCounts();
+    const refresh = () => { if (document.visibilityState === 'visible' && navigator.onLine) { void syncDevicesFromServer(); void syncUnreadCounts(); } };
+    const timer = window.setInterval(refresh, 10000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('online', refresh);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
+  }, [syncDevicesFromServer, syncUnreadCounts]);
+  useEffect(() => {
+    if (selectedDeviceId) { void syncMessagesFromServer(); void syncSchedulesFromServer(); void syncPetAiFromServer(); }
+  }, [selectedDeviceId, syncMessagesFromServer, syncSchedulesFromServer, syncPetAiFromServer]);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
 
   useEffect(() => {
@@ -28,9 +42,7 @@ export const Layout: React.FC = () => {
     }
   }, [parentRole, setParentRole]);
 
-  const unreadChildVoiceCount = messages.filter(
-    m => m.direction === 'device_to_parent' && m.status === 'unread'
-  ).length;
+  const unreadChildVoiceCount = devices.reduce((sum, device) => sum + (unreadCounts[device.id] || 0), 0);
 
   const activeSchedulesCount = schedules.filter(s => s.enabled).length;
 
@@ -49,7 +61,7 @@ export const Layout: React.FC = () => {
     },
     {
       key: 'pet-ai',
-      title: '我的声音',
+      title: '宠物与声音',
       icon: <IconMic className="w-[18px] h-[18px]" />,
     },
     {
@@ -82,17 +94,34 @@ export const Layout: React.FC = () => {
         </div>
       </header>
 
+      {(activeTab === 'wechat' || activeTab === 'schedules' || activeTab === 'pet-ai') && (
+        <div className="w-full max-w-xl mx-auto px-4 py-2 shrink-0">
+          <button type="button" onClick={() => setSwitcherOpen(true)} className="w-full rounded-xl bg-white px-3 py-2 text-left text-sm flex items-center justify-between border border-[#E9E7E0]">
+            <span className="truncate">当前设备：{currentDevice?.alias || '请先配对设备'} {currentDevice && (currentDevice.isOnline ? '· 在线' : '· 离线')}</span>
+            <span className="text-[#6B7280] shrink-0">切换 ▾</span>
+          </button>
+        </div>
+      )}
+      <Popup visible={switcherOpen} onMaskClick={() => setSwitcherOpen(false)} bodyStyle={{ borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+        <div className="p-4 pb-8 space-y-2"><h2 className="font-bold pb-2">选择设备</h2>
+          {devices.length === 0 && <p className="text-sm text-gray-500">请在家庭设备中配对新设备</p>}
+          {devices.map(device => <button key={device.id} type="button" onClick={() => { selectDevice(device.id); setSwitcherOpen(false); }} className="w-full text-left rounded-xl bg-[#F7F6F2] px-4 py-3 flex justify-between items-center">
+            <span>{device.alias} <span className="text-xs text-gray-500">{device.isOnline ? '在线' : '离线'}{device.id === selectedDeviceId ? ' · 当前' : ''}</span></span>
+            {(unreadCounts[device.id] || 0) > 0 && <span className="text-xs text-[#E85835]">{unreadCounts[device.id]} 条未读</span>}
+          </button>)}
+        </div>
+      </Popup>
       {/* 主视图内容区 */}
       <main className="flex-1 min-h-0 w-full max-w-xl mx-auto flex flex-col overflow-hidden">
-        {activeTab === 'wechat' && <WeChatVoicePage />}
+        {activeTab === 'wechat' && <WeChatVoicePage key={selectedDeviceId} />}
         {activeTab === 'schedules' && (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <VoiceSchedulesPage />
+            <VoiceSchedulesPage key={selectedDeviceId} />
           </div>
         )}
         {activeTab === 'pet-ai' && (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <PetAIConfigPage />
+            <PetAIConfigPage key={selectedDeviceId} />
           </div>
         )}
         {activeTab === 'devices' && (

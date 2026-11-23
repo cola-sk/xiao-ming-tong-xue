@@ -57,7 +57,7 @@ static void apply_server_config(const char *resp_json) {
     if (cJSON_IsObject(cfg)) {
         cJSON *vol = cJSON_GetObjectItem(cfg, "volumeLevel");
         if (cJSON_IsNumber(vol)) {
-            audio_engine_set_volume((uint8_t)vol->valuedouble);
+            audio_engine_set_remote_volume((uint8_t)(vol->valuedouble < 0 ? 0 : vol->valuedouble > 100 ? 100 : vol->valuedouble));
         }
 
         static bool s_chat_boot_synced = false;

@@ -54,6 +54,8 @@ const INITIAL_PET_CONFIG: PetAiConfig = {
 
 const INITIAL_AI_LOGS: AiChatLog[] = [];
 
+let deviceGeneration = 0;
+
 interface AppState {
   family: Family;
   children: Child[];
@@ -64,8 +66,12 @@ interface AppState {
   voiceClones: VoiceCloneProfile[];
   petConfig: PetAiConfig;
   aiLogs: AiChatLog[];
-  autoPlayOnDevice: boolean;
-  setAutoPlayOnDevice: (enabled: boolean) => void;
+  configDeviceId: string;
+  messagesDeviceId: string;
+  schedulesDeviceId: string;
+  unreadCounts: Record<string, number>;
+  syncUnreadCounts: () => Promise<void>;
+  setAutoPlayOnDevice: (enabled: boolean) => Promise<void>;
   parentRole: string;
   setParentRole: (role: string) => void;
 
@@ -84,6 +90,7 @@ interface AppState {
 
   // Actions - 功能三：亲子双向微聊
   sendParentVoiceMessage: (payload: {
+    deviceId: string;
     senderName: string;
     asrText: string;
     durationSec: number;
@@ -97,7 +104,7 @@ interface AppState {
   syncMessagesFromServer: () => Promise<void>;
 
   // Actions - 功能二：定时语音播报
-  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>) => Promise<void>;
+  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>, deviceId: string) => Promise<void>;
   updateSchedule: (id: string, updates: Partial<VoiceSchedule>) => Promise<void>;
   toggleSchedule: (id: string) => void;
   deleteSchedule: (id: string) => void;
@@ -126,8 +133,21 @@ export const useAppStore = create<AppState>()(
       voiceClones: INITIAL_VOICE_CLONES,
       petConfig: INITIAL_PET_CONFIG,
       aiLogs: INITIAL_AI_LOGS,
-      autoPlayOnDevice: false,
-      setAutoPlayOnDevice: enabled => set({ autoPlayOnDevice: enabled }),
+      configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '',
+      unreadCounts: {},
+      syncUnreadCounts: async () => {
+        try {
+          const res = await fetch('/api/v1/chat/messages?summary=unread', { cache: 'no-store' });
+          if (res.ok) { const data = await res.json(); set({ unreadCounts: data.counts || {} }); }
+        } catch { /* Retry on the next sync. */ }
+      },
+      setAutoPlayOnDevice: async enabled => {
+        const deviceId = get().selectedDeviceId;
+        if (!deviceId) throw new Error('请先选择设备');
+        const res = await fetch('/api/v1/device/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'autoPlay', deviceId, enabled }) });
+        if (!res.ok) throw new Error('保存失败，请重试');
+        set(s => ({ devices: s.devices.map(d => d.id === deviceId ? { ...d, autoPlayOnDevice: enabled } : d) }));
+      },
       parentRole: '',
       setParentRole: role => {
         if (typeof window !== 'undefined') {
@@ -188,6 +208,7 @@ export const useAppStore = create<AppState>()(
       },
 
       sendParentVoiceMessage: async ({
+        deviceId,
         senderName,
         asrText,
         durationSec,
@@ -199,7 +220,7 @@ export const useAppStore = create<AppState>()(
       }) => {
         const state = get();
         const id = `msg_${crypto.randomUUID()}`;
-        const deviceId = state.selectedDeviceId || 'default';
+        if (!deviceId || !state.devices.some(d => d.id === deviceId)) throw new Error('请先选择设备');
         const cleanText = asrText.trim() || `（${durationSec}秒原声语音）`;
         const remoteAudioUrl = audioBase64 ? `/api/v1/chat/messages/${id}/audio` : '';
         const newMsg: ChatVoiceMessage = {
@@ -232,7 +253,7 @@ export const useAppStore = create<AppState>()(
           }),
         });
         if (!response.ok) throw new Error('发送失败，请重试');
-        set(s => ({ messages: [...s.messages.filter(m => m.id !== id), newMsg] }));
+        set(s => s.selectedDeviceId === deviceId ? { messages: [...s.messages.filter(m => m.id !== id), newMsg] } : {});
         if (audioBlob) void saveLocalChatAudio(id, audioBlob);
         return id;
       },
@@ -245,19 +266,24 @@ export const useAppStore = create<AppState>()(
         });
         if (!response.ok) throw new Error('已读状态同步失败');
         set(s => ({ messages: s.messages.map(m => (m.id === msgId ? { ...m, status: 'played' } : m)) }));
+        void get().syncUnreadCounts();
       },
 
       syncMessagesFromServer: async () => {
         try {
-          const deviceId = get().selectedDeviceId || 'all';
+          const deviceId = get().selectedDeviceId;
+          if (!deviceId) return;
+          const generation = deviceGeneration;
           const res = await fetch(
             `/api/v1/chat/messages?deviceId=${encodeURIComponent(deviceId)}`,
             { cache: 'no-store' }
           );
           if (!res.ok) return;
           const data = await res.json();
+          if (generation !== deviceGeneration || get().selectedDeviceId !== deviceId) return;
           if (Array.isArray(data.messages)) {
             set(s => ({
+              messagesDeviceId: deviceId,
               messages: data.messages.map((m: any) => {
                 const existing = s.messages.find(local => local.id === m.id);
                 return {
@@ -282,10 +308,10 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      addSchedule: async draft => {
+      addSchedule: async (draft, deviceId) => {
         const state = get();
         const id = `sched_${crypto.randomUUID()}`;
-        const deviceId = state.selectedDeviceId || 'default';
+        if (!deviceId || !state.devices.some(d => d.id === deviceId)) throw new Error('设备不存在');
         const newSched: VoiceSchedule = {
           ...draft,
           id,
@@ -302,7 +328,7 @@ export const useAppStore = create<AppState>()(
           body: JSON.stringify(newSched),
         });
         if (!response.ok) throw new Error('保存定时任务失败');
-        set(s => ({ schedules: [newSched, ...s.schedules] }));
+        set(s => s.selectedDeviceId === deviceId ? { schedules: [newSched, ...s.schedules] } : {});
       },
 
       updateSchedule: async (id, updates) => {
@@ -363,15 +389,19 @@ export const useAppStore = create<AppState>()(
 
       syncSchedulesFromServer: async () => {
         try {
-          const deviceId = get().selectedDeviceId || 'all';
+          const deviceId = get().selectedDeviceId;
+          if (!deviceId) return;
+          const generation = deviceGeneration;
           const res = await fetch(
             `/api/v1/schedules?deviceId=${encodeURIComponent(deviceId)}`,
             { cache: 'no-store' }
           );
           if (!res.ok) return;
           const data = await res.json();
+          if (generation !== deviceGeneration || get().selectedDeviceId !== deviceId) return;
           if (Array.isArray(data.schedules)) {
             set(s => ({
+              schedulesDeviceId: deviceId,
               schedules: data.schedules.map((rs: any) => ({
                 ...rs,
                 familyId: s.family.id,
@@ -386,7 +416,8 @@ export const useAppStore = create<AppState>()(
 
       updatePetConfig: updates => {
         const state = get();
-        const deviceId = state.selectedDeviceId || 'default';
+        const deviceId = state.selectedDeviceId;
+        if (!deviceId || state.configDeviceId !== deviceId) return;
         const nextConfig = {
           ...state.petConfig,
           ...updates,
@@ -409,13 +440,16 @@ export const useAppStore = create<AppState>()(
 
       syncPetAiFromServer: async () => {
         try {
-          const deviceId = get().selectedDeviceId || 'default';
+          const deviceId = get().selectedDeviceId;
+          if (!deviceId) return;
+          const generation = deviceGeneration;
           const res = await fetch(
             `/api/v1/pet-ai?deviceId=${encodeURIComponent(deviceId)}`,
             { cache: 'no-store' }
           );
           if (!res.ok) return;
           const data = await res.json();
+          if (generation !== deviceGeneration || get().selectedDeviceId !== deviceId) return;
           set(s => ({
             petConfig: data.config
               ? {
@@ -429,6 +463,7 @@ export const useAppStore = create<AppState>()(
                 }
               : s.petConfig,
             aiLogs: Array.isArray(data.logs) ? data.logs : s.aiLogs,
+            configDeviceId: deviceId,
           }));
         } catch {
           // ignore
@@ -472,10 +507,13 @@ export const useAppStore = create<AppState>()(
           status: 'paired',
           firmwareVersion: remoteDev?.firmwareVersion || '1.0.0',
           batteryPercent: Number(remoteDev?.batteryPercent ?? 0),
+          autoPlayOnDevice: Boolean(remoteDev?.autoPlayOnDevice),
           isOnline: Boolean(remoteDev?.isOnline),
           lastSeenAt: remoteDev?.lastSeenAt || null,
         };
+        deviceGeneration++;
         set(s => ({
+          messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '',
           children: [...s.children, newChild],
           devices: [
             ...s.devices.filter(d => d.id !== newDevice.id),
@@ -505,6 +543,7 @@ export const useAppStore = create<AppState>()(
                 status: 'paired',
                 firmwareVersion: rd.firmwareVersion || '1.0.0',
                 batteryPercent: Number(rd.batteryPercent ?? 0),
+                autoPlayOnDevice: Boolean(rd.autoPlayOnDevice),
                 isOnline: Boolean(rd.isOnline),
                 lastSeenAt: rd.lastSeenAt || null,
               };
@@ -513,7 +552,9 @@ export const useAppStore = create<AppState>()(
               mappedDevices.some(d => d.id === s.selectedDeviceId)
                 ? s.selectedDeviceId
                 : mappedDevices[0]?.id || '';
+            if (nextSelected !== s.selectedDeviceId) deviceGeneration++;
             return {
+              ...(nextSelected !== s.selectedDeviceId ? { messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' } : {}),
               devices: mappedDevices,
               selectedDeviceId: nextSelected,
             };
@@ -528,10 +569,12 @@ export const useAppStore = create<AppState>()(
           method: 'DELETE',
         });
         if (!response.ok) throw new Error('解绑失败，请重试');
+        if (get().selectedDeviceId === deviceId) deviceGeneration++;
         set(s => {
           const remaining = s.devices.filter(d => d.id !== deviceId);
           return {
             devices: remaining,
+            ...(s.selectedDeviceId === deviceId ? { messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' } : {}),
             selectedDeviceId:
               s.selectedDeviceId === deviceId ? remaining[0]?.id || '' : s.selectedDeviceId,
           };
@@ -539,14 +582,19 @@ export const useAppStore = create<AppState>()(
       },
 
       selectDevice: deviceId => {
-        set({ selectedDeviceId: deviceId });
+        if (get().selectedDeviceId === deviceId || !get().devices.some(d => d.id === deviceId)) return;
+        deviceGeneration++;
+        set({ selectedDeviceId: deviceId, messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' });
       },
     }),
     {
       name: 'xiaoming_pet_parent_store_v2',
-      version: 7,
+      version: 8,
       migrate: (persistedState: any) => {
         if (!persistedState) return persistedState;
+        // Device-scoped snapshots are always reloaded after startup.
+        persistedState.messages = []; persistedState.schedules = []; persistedState.aiLogs = [];
+        persistedState.petConfig = INITIAL_PET_CONFIG; persistedState.configDeviceId = '';
         // 自动清理旧本地缓存中的测试/演示假数据
         if (Array.isArray(persistedState.devices)) {
           persistedState.devices = persistedState.devices.filter(
@@ -587,12 +635,7 @@ export const useAppStore = create<AppState>()(
         selectedDeviceId: s.selectedDeviceId,
         parentRole: s.parentRole,
         // 亲子微聊消息持久化时剔除临时音频 Blob/Base64，只保留文字与状态，不保存聊天音频文件
-        messages: s.messages.map(m => ({ ...m, audioUrl: '' })),
-        schedules: s.schedules,
         voiceClones: s.voiceClones,
-        petConfig: s.petConfig,
-        aiLogs: s.aiLogs,
-        autoPlayOnDevice: s.autoPlayOnDevice,
       }),
     }
   )

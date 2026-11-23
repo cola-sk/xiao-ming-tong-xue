@@ -41,7 +41,7 @@ static void handle_notify_payload(const char *data, int data_len) {
         } else if (strcmp(evt->valuestring, "config_updated") == 0) {
             cJSON *vol = cJSON_GetObjectItem(root, "volumeLevel");
             if (cJSON_IsNumber(vol)) {
-                audio_engine_set_volume((uint8_t)vol->valuedouble);
+                audio_engine_set_remote_volume((uint8_t)(vol->valuedouble < 0 ? 0 : vol->valuedouble > 100 ? 100 : vol->valuedouble));
             }
         }
     }

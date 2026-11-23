@@ -21,9 +21,12 @@
 #include "device_pairing.h"
 #include "voice_encoder.h"
 #include "device_storage.h"
+#include "nvs.h"
 
 static const char *TAG = "audio_engine";
 static atomic_uchar s_volume_percent = 80;
+static atomic_int s_remote_volume = -1;
+static atomic_bool s_local_volume_saved;
 static esp_codec_dev_handle_t s_speaker, s_mic;
 static SemaphoreHandle_t s_codec_lock;
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -80,6 +83,16 @@ static void load_pending(void) {
     fclose(f);
 }
 void audio_engine_init(void) {
+    nvs_handle_t nvs;
+    if (nvs_open("pet_audio", NVS_READONLY, &nvs) == ESP_OK) {
+        uint8_t value;
+        if (nvs_get_u8(nvs, "volume", &value) == ESP_OK && value <= 100) {
+            atomic_store(&s_volume_percent, value);
+            atomic_store(&s_local_volume_saved, true);
+        }
+        if (nvs_get_u8(nvs, "remote", &value) == ESP_OK && value <= 100) atomic_store(&s_remote_volume, value);
+        nvs_close(nvs);
+    }
     s_codec_lock = xSemaphoreCreateMutex();
     s_speaker = bsp_audio_codec_speaker_init(); s_mic = bsp_audio_codec_microphone_init();
     esp_audio_dec_register_default(); esp_audio_simple_dec_register_default();
@@ -260,7 +273,28 @@ esp_err_t audio_engine_play_file(const char *path) {
     return audio_engine_play_file_gen(path, audio_engine_get_stop_generation());
 }
 void audio_engine_stop_playback(void) { atomic_fetch_add(&s_stop_generation, 1); }
-void audio_engine_set_volume(uint8_t volume) { atomic_store(&s_volume_percent, volume > 100 ? 100 : volume); }
+static void save_volume(const char *key, uint8_t value) {
+    nvs_handle_t nvs;
+    if (nvs_open("pet_audio", NVS_READWRITE, &nvs) == ESP_OK) {
+        if (nvs_set_u8(nvs, key, value) == ESP_OK) nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+void audio_engine_set_volume(uint8_t volume) {
+    if (volume > 100) volume = 100;
+    if (atomic_exchange(&s_volume_percent, volume) != volume || !atomic_load(&s_local_volume_saved)) {
+        save_volume("volume", volume);
+        atomic_store(&s_local_volume_saved, true);
+    }
+}
+void audio_engine_set_remote_volume(uint8_t volume) {
+    if (volume > 100) volume = 100;
+    int previous = atomic_exchange(&s_remote_volume, volume);
+    if (previous != volume) {
+        save_volume("remote", volume);
+        if (previous >= 0 || !atomic_load(&s_local_volume_saved)) audio_engine_set_volume(volume);
+    }
+}
 uint8_t audio_engine_get_volume(void) { return atomic_load(&s_volume_percent); }
 
 #ifdef PET_HARDWARE_SMOKE
