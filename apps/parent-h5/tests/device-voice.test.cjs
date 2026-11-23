@@ -113,3 +113,29 @@ test('device autoplay settings are independent', async () => {
   assert.equal(devices.find(d => d.id === 'a').autoPlayOnDevice, true);
   assert.equal(devices.find(d => d.id === 'b').autoPlayOnDevice, false);
 });
+
+test('renaming a device preserves other devices and the selected device identity', async () => {
+  const store = loader({ './devicePairing': { isDeviceBound: async () => true } })('src/server/deviceStore.ts');
+  for (const deviceId of ['a', 'b']) await store.registerDeviceFromParent({ deviceId, alias: deviceId, childNickname: 'child' });
+  const renamed = await store.renameDevice('a', '大宝的设备');
+  assert.equal(renamed.id, 'a');
+  const devices = await store.listDevicesWithStatus();
+  assert.equal(devices.find(d => d.id === 'a').alias, '大宝的设备');
+  assert.equal(devices.find(d => d.id === 'b').alias, 'b');
+  assert.equal(await store.renameDevice('missing', 'x'), null);
+});
+
+test('grouped schedules remain separately scoped and acknowledged by device', async () => {
+  const store = loader()('src/server/appDataStore.ts');
+  const schedule = { groupId: 'group-1', title: '提醒', cronExpr: '30 7 * * 1', timeStr: '07:30', repeatDays: [1], enabled: true, sourceType: 'tts', clonedVoiceId: null, clonedSpeakerRole: null, textContent: '起床', audioUrl: null, audioMd5: null, repeatPlayCount: 1 };
+  await store.upsertVoiceSchedule({ ...schedule, id: 'a1', deviceId: 'a' });
+  await store.upsertVoiceSchedule({ ...schedule, id: 'b1', deviceId: 'b' });
+  assert.equal((await store.listVoiceSchedules('all')).length, 2);
+  assert.deepEqual(Array.from(await store.listVoiceSchedules('a'), x => x.id), ['a1']);
+  assert.equal((await store.listVoiceSchedules('b'))[0].groupId, 'group-1');
+  await store.ackVoiceSchedule('a1', 'a');
+  assert.equal((await store.listVoiceSchedules('a'))[0].lastAckStatus, 'confirmed');
+  assert.equal((await store.listVoiceSchedules('b'))[0].lastAckStatus, 'idle');
+  await store.upsertVoiceSchedule({ ...schedule, groupId: undefined, id: 'a1', deviceId: 'a', title: '新提醒' });
+  assert.equal((await store.listVoiceSchedules('a'))[0].groupId, 'group-1');
+});

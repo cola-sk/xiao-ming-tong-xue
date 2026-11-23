@@ -31,6 +31,7 @@ export interface VoiceCloneRecord {
 
 export interface VoiceScheduleRecord {
   id: string;
+  groupId?: string;
   deviceId: string;
   title: string;
   cronExpr: string;
@@ -304,6 +305,7 @@ function mapScheduleRow(r: Record<string, unknown>): VoiceScheduleRecord {
   }
   return {
     id: String(r.id),
+    groupId: r.group_id ? String(r.group_id) : undefined,
     deviceId: String(r.device_id || 'default'),
     title: String(r.title),
     cronExpr: String(r.cron_expr),
@@ -373,12 +375,12 @@ export async function upsertVoiceSchedule(
     await ensureNeonSchema();
     const rows = await sql`
       INSERT INTO voice_schedules (
-        id, device_id, title, cron_expr, time_str, repeat_days, enabled,
+        id, device_id, group_id, title, cron_expr, time_str, repeat_days, enabled,
         source_type, cloned_voice_id, cloned_speaker_role, text_content,
         audio_url, audio_md5, repeat_play_count, require_ack,
         last_ack_status, last_ack_at, updated_at
       ) VALUES (
-        ${id}, ${params.deviceId || 'default'}, ${params.title}, ${params.cronExpr},
+        ${id}, ${params.deviceId || 'default'}, ${params.groupId || null}, ${params.title}, ${params.cronExpr},
         ${params.timeStr}, ${repeatDaysJson}::jsonb, ${params.enabled},
         ${params.sourceType}, ${params.clonedVoiceId || null}, ${params.clonedSpeakerRole || null},
         ${params.textContent}, ${safeAudioUrl}, ${params.audioMd5 || null},
@@ -387,6 +389,7 @@ export async function upsertVoiceSchedule(
       )
       ON CONFLICT (id) DO UPDATE SET
         device_id = EXCLUDED.device_id,
+        group_id = COALESCE(EXCLUDED.group_id, voice_schedules.group_id),
         title = EXCLUDED.title,
         cron_expr = EXCLUDED.cron_expr,
         time_str = EXCLUDED.time_str,
@@ -412,6 +415,7 @@ export async function upsertVoiceSchedule(
   const record: VoiceScheduleRecord = {
     id,
     deviceId: params.deviceId || 'default',
+    groupId: params.groupId || existing?.groupId,
     title: params.title,
     cronExpr: params.cronExpr,
     timeStr: params.timeStr,

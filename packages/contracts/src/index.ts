@@ -81,6 +81,7 @@ export const PET_PERSONAS = [
 /** 定时语音任务 (`voice_schedules`) */
 export interface VoiceScheduleContract {
   id: string;
+  groupId?: string;
   familyId: string;
   deviceId: string;
   childId?: string | null;

@@ -120,6 +120,8 @@ export async function ensureNeonSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS require_ack BOOLEAN NOT NULL DEFAULT FALSE
       `;
 
+      await sql`ALTER TABLE voice_schedules ADD COLUMN IF NOT EXISTS group_id TEXT`;
+
       // 7. 亲子双向微聊消息表 (chat_voice_messages) —— 仅在未读中转期间暂存 pending_audio，已读后即置 NULL 清空（不长期存库）
       await sql`
         CREATE TABLE IF NOT EXISTS chat_voice_messages (

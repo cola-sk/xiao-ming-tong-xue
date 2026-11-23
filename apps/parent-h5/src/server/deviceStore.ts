@@ -245,3 +245,18 @@ export async function updateDeviceAutoPlay(deviceId: string, enabled: boolean): 
   memoryDeviceMap.set(deviceId, updated);
   return updated;
 }
+
+/** 修改设备展示名称；设备标识与配对凭据保持不变。 */
+export async function renameDevice(deviceId: string, alias: string): Promise<DeviceRecord | null> {
+  const sql = getNeonSql();
+  if (sql) {
+    await ensureNeonSchema();
+    const rows = await sql`UPDATE devices SET alias = ${alias}, updated_at = NOW() WHERE id = ${deviceId} RETURNING *`;
+    return rows.length ? mapRow(rows[0] as Record<string, unknown>) : null;
+  }
+  const existing = memoryDeviceMap.get(deviceId);
+  if (!existing) return null;
+  const updated = { ...existing, alias };
+  memoryDeviceMap.set(deviceId, updated);
+  return updated;
+}

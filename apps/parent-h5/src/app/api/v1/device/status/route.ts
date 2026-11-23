@@ -3,6 +3,7 @@ import {
   listDevicesWithStatus,
   updateDeviceVolume,
   updateDeviceAutoPlay,
+  renameDevice,
   deleteDeviceById,
 } from '@/server/deviceStore';
 
@@ -34,6 +35,16 @@ export async function POST(request: NextRequest) {
   const action = String(body.action || 'bind');
 
   try {
+    if (action === 'rename') {
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : '';
+      const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
+      if (!deviceId || !alias || [...alias].length > 50) {
+        return NextResponse.json({ error: '设备名称须为 1 到 50 个字符' }, { status: 400 });
+      }
+      const device = await renameDevice(deviceId, alias);
+      if (!device) return NextResponse.json({ error: '设备不存在' }, { status: 404 });
+      return NextResponse.json({ status: 'ok', device });
+    }
     if (action === 'autoPlay') {
       const deviceId = String(body.deviceId || '').trim();
       if (!deviceId || typeof body.enabled !== 'boolean') return NextResponse.json({ error: '参数无效' }, { status: 400 });

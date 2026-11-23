@@ -9,7 +9,7 @@ import { IconPlus, IconSparkle, IconVolume } from '../../components/Icons';
 import { playAudioOrFallback, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 import { VoiceCloneModal } from '../VoiceSchedules/VoiceCloneModal';
 
-export const PetAIConfigPage: React.FC = () => {
+export const PetAIConfigPage: React.FC<{ onSelectDevice: () => void }> = ({ onSelectDevice }) => {
   const {
     petConfig,
     devices, selectedDeviceId, configDeviceId,
@@ -206,6 +206,14 @@ export const PetAIConfigPage: React.FC = () => {
         )}
       </div>
 
+      {/* 声音库为家庭共享；设备切换只影响下方 AI 伙伴设置。 */}
+      <div className="space-y-1.5">
+        <button type="button" onClick={onSelectDevice} className="w-full rounded-xl bg-white px-3 py-2 text-left text-sm flex items-center justify-between border border-[#E9E7E0]">
+          <span className="truncate">AI 伙伴设置：{devices.find(d => d.id === selectedDeviceId)?.alias || '请先选择设备'}</span>
+          <span className="text-[#6B7280] shrink-0">切换 ▾</span>
+        </button>
+        <p className="text-xs text-[#77786F] px-1">切换后下方显示所选设备的 AI 伙伴设置，家庭声音库由所有设备共享；其他页面也会使用所选设备。</p>
+      </div>
       {/* 2. 小宠物声音与人设配置 */}
       {selectedDeviceId && configDeviceId === selectedDeviceId ? <form onSubmit={handleSaveConfig} className="kid-card space-y-3.5">
         <div className="flex items-center justify-between">

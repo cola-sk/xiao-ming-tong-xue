@@ -12,7 +12,7 @@ import { playAudioStrict, requestDoubaoTtsAudio } from '../../utils/voiceSynth';
 
 export const VoiceSchedulesPage: React.FC = () => {
   const {
-    schedules, selectedDeviceId, schedulesDeviceId,
+    schedules, devices, schedulesDeviceId,
     voiceClones,
     updateSchedule,
     toggleSchedule,
@@ -24,6 +24,11 @@ export const VoiceSchedulesPage: React.FC = () => {
   useEffect(() => {
     void syncSchedulesFromServer();
     void syncVoiceClonesFromServer();
+    const refresh = () => { if (document.visibilityState === 'visible' && navigator.onLine) void syncSchedulesFromServer(); };
+    const timer = window.setInterval(refresh, 10000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('online', refresh);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
   }, [syncSchedulesFromServer, syncVoiceClonesFromServer]);
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -32,7 +37,7 @@ export const VoiceSchedulesPage: React.FC = () => {
   const [editMode, setEditMode] = useState<ScheduleModalMode>('create');
 
   const handleCreate = () => {
-    if (!selectedDeviceId) { Toast.show({ content: '请先配对设备' }); return; }
+    if (!devices.length) { Toast.show({ content: '请先配对设备' }); return; }
     setEditingSchedule(null);
     setEditMode('create');
     setModalVisible(true);
@@ -53,12 +58,12 @@ export const VoiceSchedulesPage: React.FC = () => {
   const handleDelete = (sched: VoiceSchedule) => {
     Dialog.confirm({
       title: '删除定时语音？',
-      content: `确定要删除「${sched.title} (${sched.timeStr})」吗？设备本地缓存音频也将同步移除。`,
+      content: `确定删除「${sched.title} (${sched.timeStr})」吗？关联设备联网同步后将不再播报。`,
       confirmText: '删除',
       cancelText: '取消',
-      onConfirm: () => {
-        deleteSchedule(sched.id);
-        Toast.show({ content: '已删除定时提醒' });
+      onConfirm: async () => {
+        try { await deleteSchedule(sched.id); Toast.show({ content: '已删除定时提醒' }); }
+        catch (error) { Toast.show({ content: error instanceof Error ? error.message : '删除失败' }); }
       },
     });
   };
@@ -143,14 +148,20 @@ export const VoiceSchedulesPage: React.FC = () => {
     Toast.show({ icon: 'fail', content: ttsRes.error || '音频合成失败，请重试' });
   };
 
+  const groups = Array.from(schedules.reduce((map, item) => {
+    const key = item.groupId || item.id;
+    map.set(key, [...(map.get(key) || []), item]);
+    return map;
+  }, new Map<string, VoiceSchedule[]>()).values());
+
   return (
     <div className="px-3.5 pt-3 pb-24 space-y-3.5 text-[#1F2937]">
       {/* 1. 顶部标题与新建按钮 */}
       <div className="flex items-center justify-between gap-2 px-0.5">
         <div>
-          <h2 className="text-h2 text-[#1F2937]">定时语音播报 ({schedules.length})</h2>
+          <h2 className="text-h2 text-[#1F2937]">定时语音播报 ({groups.length})</h2>
           <p className="text-caption text-[#9CA3AF]">
-            支持爸妈克隆声音合成
+            显示全部设备的提醒；设备联网同步后生效
           </p>
         </div>
         <button
@@ -166,14 +177,14 @@ export const VoiceSchedulesPage: React.FC = () => {
       {/* 定时任务列表 */}
       {schedules.length === 0 ? (
         <div className="kid-card text-center py-6">
-          <Empty description={selectedDeviceId && schedulesDeviceId !== selectedDeviceId ? '正在加载定时任务…' : '暂无定时语音任务，点击右上角新建'} />
+          <Empty description={schedulesDeviceId !== 'all' ? '正在加载定时任务…' : '暂无定时语音任务，点击右上角新建'} />
         </div>
       ) : (
         <div className="space-y-2.5">
-          {schedules.map(sched => (
+          {groups.map(members => { const sched = members[0]; const anyEnabled = members.some(item => item.enabled); const allEnabled = members.every(item => item.enabled); return (
             <div
               key={sched.id}
-              className={`kid-card transition-opacity ${!sched.enabled ? 'opacity-60' : ''}`}
+              className={`kid-card transition-opacity ${!anyEnabled ? 'opacity-60' : ''}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
@@ -198,8 +209,8 @@ export const VoiceSchedulesPage: React.FC = () => {
                 </div>
 
                 <Switch
-                  checked={sched.enabled}
-                  onChange={() => toggleSchedule(sched.id)}
+                  checked={allEnabled}
+                  onChange={() => { void toggleSchedule(sched.id).catch(error => Toast.show({ content: error instanceof Error ? error.message : '操作失败' })); }}
                   style={{
                     '--width': '38px',
                     '--height': '22px',
@@ -208,6 +219,14 @@ export const VoiceSchedulesPage: React.FC = () => {
                 />
               </div>
 
+              <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                <span className="text-[#77786F]">应用设备：</span>
+                {members.map(member => <span key={member.id} className="rounded-full bg-[#F3F1EB] px-2 py-1 text-[#4C5148]">
+                  {devices.find(device => device.id === member.deviceId)?.alias || (member.deviceId === 'default' ? '旧版默认设备' : `${member.deviceId}（未绑定）`)} · {member.enabled ? '已启用' : '已停用'}{member.lastAckStatus === 'confirmed' ? ' · 已确认' : ''}
+                </span>)}
+              </div>
+              {!allEnabled && anyEnabled && <p className="text-xs text-[#B45F32] mt-1">部分设备已停用，开启开关可对全部设备启用。</p>}
+              {members.some(item => item.title !== sched.title || item.timeStr !== sched.timeStr || item.textContent !== sched.textContent || JSON.stringify(item.repeatDays) !== JSON.stringify(sched.repeatDays) || item.audioMd5 !== sched.audioMd5 || item.requireAck !== sched.requireAck || item.repeatPlayCount !== sched.repeatPlayCount) && <p className="text-xs text-[#B45F32] mt-1">部分设备的提醒内容不同，请重新编辑以统一设置。</p>}
               {/* 底部状态与操作栏 */}
               <div className="mt-2.5 pt-2.5 border-t border-[#F3F4F6] flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-caption text-[#6B7280] flex items-center gap-1.5 flex-wrap">
@@ -220,21 +239,7 @@ export const VoiceSchedulesPage: React.FC = () => {
                       ? `最多播 ${sched.repeatPlayCount} 次(需确认)`
                       : `固定播 ${sched.repeatPlayCount} 次`}
                   </span>
-                  <span>·</span>
-                  {sched.lastAckStatus === 'confirmed' && sched.lastAckAt ? (
-                    <span className="text-[#4C7866] font-bold">
-                      孩子已确认 (
-                      {new Date(sched.lastAckAt).toLocaleTimeString('zh-CN', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                      )
-                    </span>
-                  ) : sched.lastAckStatus === 'ringing' ? (
-                    <span className="text-[#E85835] font-bold">正在响铃待确认…</span>
-                  ) : (
-                    <span>等待准点触发</span>
-                  )}
+
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -273,7 +278,7 @@ export const VoiceSchedulesPage: React.FC = () => {
                 </div>
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
 

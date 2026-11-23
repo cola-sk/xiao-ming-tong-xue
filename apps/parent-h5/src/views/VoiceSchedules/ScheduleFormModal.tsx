@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Popup, Stepper, Toast } from 'antd-mobile';
 import { VoiceSchedule } from '../../services/types';
 import { useAppStore } from '../../stores/useAppStore';
@@ -42,8 +42,10 @@ export const ScheduleFormModal: React.FC<Props> = ({
       ? 'voice'
       : 'schedule'
     : 'create';
-  const { addSchedule, updateSchedule, petConfig, voiceClones, selectedDeviceId, devices } = useAppStore();
+  const { addSchedule, updateSchedule, voiceClones, devices } = useAppStore();
 
+  const [targetDeviceIds, setTargetDeviceIds] = useState<string[]>([]);
+  const groupIdRef = useRef('');
   const [title, setTitle] = useState('晚上刷牙睡觉提醒');
   const [timeStr, setTimeStr] = useState('20:30');
   const [repeatDays, setRepeatDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 7]);
@@ -58,6 +60,8 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
   useEffect(() => {
     if (!visible) return;
+    groupIdRef.current = `sched_${crypto.randomUUID()}`;
+    setTargetDeviceIds(devices.length === 1 ? [devices[0].id] : []);
     if (initialSchedule) {
       setTitle(initialSchedule.title);
       setTimeStr(initialSchedule.timeStr);
@@ -77,7 +81,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setRepeatPlayCount(2);
       setRequireAck(false);
     }
-  }, [initialSchedule, visible, voiceClones]);
+  }, [initialSchedule, visible]);
 
   const toggleDay = (day: number) => {
     setRepeatDays(prev =>
@@ -120,6 +124,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
 
   const handleSubmit = async () => {
     if (isSynthesizing) return;
+    if (mode === 'create' && !targetDeviceIds.length) { Toast.show({ content: '请选择至少一台设备' }); return; }
 
     if (mode !== 'voice' && !title.trim()) {
       Toast.show({ icon: 'fail', content: '请填写提醒任务标题' });
@@ -225,7 +230,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           audioMd5,
           repeatPlayCount,
           requireAck,
-        }, selectedDeviceId);
+        }, targetDeviceIds, groupIdRef.current);
         Toast.show({
           icon: 'success',
           content: audioUrl
@@ -237,8 +242,8 @@ export const ScheduleFormModal: React.FC<Props> = ({
         });
       }
       onClose();
-    } catch {
-      Toast.show({ icon: 'fail', content: '保存失败，请检查网络后重试' });
+    } catch (error) {
+      Toast.show({ icon: 'fail', content: error instanceof Error ? error.message : '保存失败，请检查网络后重试' });
     } finally {
       setIsSynthesizing(false);
     }
@@ -271,7 +276,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           </button>
         </div>
 
-        <p className="px-4 py-2 text-xs text-[#77786F]">目标设备：{devices.find(d => d.id === selectedDeviceId)?.alias || '未选择设备'}</p>
+        {initialSchedule && <p className="px-4 py-2 text-xs text-[#77786F]">修改将应用到该提醒关联的所有设备。</p>}
         {/* Body */}
         <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-3.5">
           {mode === 'schedule' && initialSchedule && (
@@ -285,6 +290,14 @@ export const ScheduleFormModal: React.FC<Props> = ({
             </div>
           )}
 
+          {mode === 'create' && <fieldset className="kid-card space-y-2">
+            <legend className="text-caption font-bold">应用到设备 *</legend>
+            <p className="text-xs text-[#77786F]">可选择一台或多台设备，设备联网同步后生效。</p>
+            {devices.map(device => <label key={device.id} className="flex items-center gap-2 py-1 text-sm">
+              <input type="checkbox" checked={targetDeviceIds.includes(device.id)} onChange={e => setTargetDeviceIds(ids => e.target.checked ? [...ids, device.id] : ids.filter(id => id !== device.id))} />
+              {device.alias} <span className="text-xs text-[#9CA3AF]">{device.isOnline ? '在线' : '离线'}</span>
+            </label>)}
+          </fieldset>}
           {/* 1. 提醒时间与标题 */}
           {(mode === 'create' || mode === 'schedule') && (
           <div className="kid-card space-y-3">
@@ -372,7 +385,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
             <div className="grid grid-cols-3 gap-1.5">
               {[
                 { label: '我的声音', value: 'parent_clone' as const },
-                { label: `${petConfig.petName}萌音`, value: 'tts' as const },
+                { label: '小铭同学萌音', value: 'tts' as const },
                 { label: '直接录原声', value: 'record' as const },
               ].map(opt => (
                 <button
@@ -434,7 +447,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
                 {sourceType === 'parent_clone'
                   ? `输入文字（自动用${selectedCloneProfile?.speakerRole || '爸妈'}克隆声音合成播报）*`
                   : sourceType === 'tts'
-                  ? `输入文字（用${petConfig.petName}声音播报）*`
+                  ? '输入文字（用萌音播报）*'
                   : '录音内容备注 *'}
               </label>
               <textarea

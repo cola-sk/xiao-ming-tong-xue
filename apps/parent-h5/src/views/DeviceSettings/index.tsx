@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Popup, Switch, Toast } from 'antd-mobile';
-import { DeleteOutline } from 'antd-mobile-icons';
+import { DeleteOutline, EditSOutline } from 'antd-mobile-icons';
 import { useAppStore } from '../../stores/useAppStore';
 import { IconDevice, IconPlus, IconBattery, IconWifi } from '../../components/Icons';
 
@@ -13,6 +13,7 @@ export const DeviceSettingsPage: React.FC = () => {
     addDevice,
     syncDevicesFromServer,
     removeDevice,
+    renameDevice,
     selectDevice,
     petConfig, configDeviceId,
     updatePetConfig,
@@ -23,6 +24,9 @@ export const DeviceSettingsPage: React.FC = () => {
 
   const currentDevice = devices.find(d => d.id === selectedDeviceId);
   const autoPlayOnDevice = currentDevice?.autoPlayOnDevice ?? false;
+  const [editingDevice, setEditingDevice] = useState<{ id: string; alias: string } | null>(null);
+  const [deviceName, setDeviceName] = useState('');
+  const [savingName, setSavingName] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [pairingCode, setPairingCode] = useState('');
   const [alias, setAlias] = useState('');
@@ -173,6 +177,13 @@ export const DeviceSettingsPage: React.FC = () => {
                     </span>
                     <button
                       type="button"
+                      onClick={e => { e.stopPropagation(); setEditingDevice({ id: dev.id, alias: dev.alias }); setDeviceName(dev.alias); }}
+                      className="kid-btn kid-btn-ghost kid-btn-sm !h-6 !min-h-[24px] !px-1.5"
+                      aria-label={`编辑 ${dev.alias} 的设备名称`}
+                      title="编辑设备名称"
+                    ><EditSOutline /></button>
+                    <button
+                      type="button"
                       onClick={e => {
                         e.stopPropagation();
                         void removeDevice(dev.id).catch(err => Toast.show({ content: err instanceof Error ? err.message : '解绑失败' }));
@@ -189,6 +200,25 @@ export const DeviceSettingsPage: React.FC = () => {
           </div>
         )}
       </section>
+
+      <Popup visible={Boolean(editingDevice)} onMaskClick={() => { if (!savingName) setEditingDevice(null); }} bodyStyle={{ borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+        <form className="p-5 pb-8 space-y-4" onSubmit={async e => {
+          e.preventDefault();
+          if (!editingDevice || savingName) return;
+          const name = deviceName.trim();
+          if (!name || [...name].length > 50) { Toast.show({ content: '设备名称须为 1 到 50 个字符' }); return; }
+          setSavingName(true);
+          try { await renameDevice(editingDevice.id, name); setEditingDevice(null); Toast.show({ icon: 'success', content: '设备名称已更新' }); }
+          catch (error) { Toast.show({ content: error instanceof Error ? error.message : '修改名称失败' }); }
+          finally { setSavingName(false); }
+        }}>
+          <h3 className="text-h2">编辑设备名称</h3>
+          <p className="text-xs text-[#77786F]">例如“大宝的设备”，方便在聊天和定时播报中识别。</p>
+          <label htmlFor="device-alias" className="sr-only">设备名称</label>
+          <input id="device-alias" className="kid-input" value={deviceName} onChange={e => setDeviceName(e.target.value)} maxLength={50} placeholder="请输入设备名称" autoFocus />
+          <div className="flex gap-2"><button type="button" disabled={savingName} onClick={() => setEditingDevice(null)} className="kid-btn kid-btn-ghost flex-1">取消</button><button type="submit" disabled={savingName} className="kid-btn kid-btn-primary flex-1">{savingName ? '保存中…' : '保存'}</button></div>
+        </form>
+      </Popup>
 
       {/* 2. 家长身份设置（仅在当前设备本地保存） */}
       <section className="kid-card space-y-2.5">

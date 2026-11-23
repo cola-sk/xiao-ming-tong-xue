@@ -55,6 +55,7 @@ const INITIAL_PET_CONFIG: PetAiConfig = {
 const INITIAL_AI_LOGS: AiChatLog[] = [];
 
 let deviceGeneration = 0;
+let scheduleRequestVersion = 0;
 
 interface AppState {
   family: Family;
@@ -104,10 +105,10 @@ interface AppState {
   syncMessagesFromServer: () => Promise<void>;
 
   // Actions - 功能二：定时语音播报
-  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>, deviceId: string) => Promise<void>;
+  addSchedule: (draft: Omit<VoiceSchedule, 'id' | 'familyId' | 'deviceId' | 'createdAt' | 'lastAckStatus'>, deviceIds: string[], groupId: string) => Promise<void>;
   updateSchedule: (id: string, updates: Partial<VoiceSchedule>) => Promise<void>;
-  toggleSchedule: (id: string) => void;
-  deleteSchedule: (id: string) => void;
+  toggleSchedule: (id: string) => Promise<void>;
+  deleteSchedule: (id: string) => Promise<void>;
   syncSchedulesFromServer: () => Promise<void>;
 
   // Actions - 功能一：AI 宠物对话与人设配置
@@ -118,6 +119,7 @@ interface AppState {
   addDevice: (pairingCode: string, alias: string, childNickname: string) => Promise<void>;
   syncDevicesFromServer: () => Promise<void>;
   removeDevice: (deviceId: string) => Promise<void>;
+  renameDevice: (deviceId: string, alias: string) => Promise<void>;
   selectDevice: (deviceId: string) => void;
 }
 
@@ -308,110 +310,73 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      addSchedule: async (draft, deviceId) => {
+      addSchedule: async (draft, deviceIds, groupId) => {
         const state = get();
-        const id = `sched_${crypto.randomUUID()}`;
-        if (!deviceId || !state.devices.some(d => d.id === deviceId)) throw new Error('设备不存在');
-        const newSched: VoiceSchedule = {
-          ...draft,
-          id,
-          familyId: state.family.id,
-          deviceId,
-          childId: state.children[0]?.id,
-          lastAckStatus: 'idle',
-          lastAckAt: null,
-          createdAt: new Date().toISOString(),
-        };
-        const response = await fetch('/api/v1/schedules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newSched),
-        });
-        if (!response.ok) throw new Error('保存定时任务失败');
-        set(s => s.selectedDeviceId === deviceId ? { schedules: [newSched, ...s.schedules] } : {});
+        if (!deviceIds.length || deviceIds.some(id => !state.devices.some(d => d.id === id))) throw new Error('请选择已配对的设备');
+        const results = await Promise.allSettled(deviceIds.map(async deviceId => {
+          const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${groupId}:${deviceId}`));
+          const id = `sched_${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
+          const response = await fetch('/api/v1/schedules', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...draft, id, groupId, deviceId }),
+          });
+          if (!response.ok) throw new Error(deviceId);
+        }));
+        await get().syncSchedulesFromServer();
+        if (results.some(result => result.status === 'rejected')) throw new Error('部分设备保存失败，已成功的设备已显示在列表中；可重试');
       },
 
       updateSchedule: async (id, updates) => {
         const existing = get().schedules.find(item => item.id === id);
         if (!existing) throw new Error('定时任务不存在');
-        const merged = { ...existing, ...updates, updatedAt: new Date().toISOString() };
-        const response = await fetch('/api/v1/schedules', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
-        });
-        if (!response.ok) throw new Error('保存定时任务失败');
-        const data = await response.json().catch(() => null);
-        const saved = data?.schedule ? { ...merged, ...data.schedule } : merged;
-        set(s => ({ schedules: s.schedules.map(item => item.id === id ? saved : item) }));
+        const members = get().schedules.filter(item => existing.groupId ? item.groupId === existing.groupId : item.id === id);
+        const results = await Promise.allSettled(members.map(async item => {
+          const response = await fetch('/api/v1/schedules', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...item, ...updates, id: item.id, deviceId: item.deviceId, groupId: item.groupId }),
+          });
+          if (!response.ok) throw new Error(item.deviceId);
+        }));
+        await get().syncSchedulesFromServer();
+        if (results.some(result => result.status === 'rejected')) throw new Error('部分设备更新失败，请检查列表后重试');
       },
 
-      toggleSchedule: id => {
-        let nextEnabled: boolean | undefined;
-        set(s => ({
-          schedules: s.schedules.map(item => {
-            if (item.id === id) {
-              nextEnabled = !item.enabled;
-              return {
-                ...item,
-                enabled: nextEnabled,
-                lastAckStatus: nextEnabled ? 'idle' : item.lastAckStatus,
-                lastAckAt: nextEnabled ? null : item.lastAckAt,
-              };
-            }
-            return item;
-          }),
+      toggleSchedule: async id => {
+        const existing = get().schedules.find(item => item.id === id);
+        if (!existing) throw new Error('定时任务不存在');
+        const members = get().schedules.filter(item => existing.groupId ? item.groupId === existing.groupId : item.id === id);
+        const enabled = !members.every(item => item.enabled);
+        const results = await Promise.allSettled(members.map(async item => {
+          const response = await fetch('/api/v1/schedules', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, enabled }) });
+          if (!response.ok) throw new Error(item.deviceId);
         }));
-        fetch('/api/v1/schedules', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, enabled: nextEnabled }),
-        })
-          .then(r => (r.ok ? r.json() : null))
-          .then(data => {
-            if (data?.schedule) {
-              set(s => ({
-                schedules: s.schedules.map(item =>
-                  item.id === id ? { ...item, ...data.schedule } : item
-                ),
-              }));
-            }
-          })
-          .catch(() => {});
+        await get().syncSchedulesFromServer();
+        if (results.some(result => result.status === 'rejected')) throw new Error('部分设备操作失败，请检查列表后重试');
       },
 
-      deleteSchedule: id => {
-        set(s => ({
-          schedules: s.schedules.filter(item => item.id !== id),
+      deleteSchedule: async id => {
+        const existing = get().schedules.find(item => item.id === id);
+        if (!existing) throw new Error('定时任务不存在');
+        const members = get().schedules.filter(item => existing.groupId ? item.groupId === existing.groupId : item.id === id);
+        const results = await Promise.allSettled(members.map(async item => {
+          const response = await fetch(`/api/v1/schedules?id=${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error(item.deviceId);
         }));
-        fetch(`/api/v1/schedules?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
-          () => {}
-        );
+        await get().syncSchedulesFromServer();
+        if (results.some(result => result.status === 'rejected')) throw new Error('部分设备删除失败，请检查列表后重试');
       },
 
       syncSchedulesFromServer: async () => {
+        const version = ++scheduleRequestVersion;
         try {
-          const deviceId = get().selectedDeviceId;
-          if (!deviceId) return;
-          const generation = deviceGeneration;
-          const res = await fetch(
-            `/api/v1/schedules?deviceId=${encodeURIComponent(deviceId)}`,
-            { cache: 'no-store' }
-          );
+          const res = await fetch('/api/v1/schedules?deviceId=all', { cache: 'no-store' });
           if (!res.ok) return;
           const data = await res.json();
-          if (generation !== deviceGeneration || get().selectedDeviceId !== deviceId) return;
+          if (version !== scheduleRequestVersion) return;
           if (Array.isArray(data.schedules)) {
-            set(s => ({
-              schedulesDeviceId: deviceId,
-              schedules: data.schedules.map((rs: any) => ({
-                ...rs,
-                familyId: s.family.id,
-                childId: s.children[0]?.id,
-              })),
-            }));
+            set(s => ({ schedulesDeviceId: 'all', schedules: data.schedules.map((rs: any) => ({ ...rs, familyId: s.family.id })) }));
           }
-        } catch {
-          // ignore
-        }
+        } catch { /* Retry on the next refresh. */ }
       },
 
       updatePetConfig: updates => {
@@ -513,7 +478,7 @@ export const useAppStore = create<AppState>()(
         };
         deviceGeneration++;
         set(s => ({
-          messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '',
+          messages: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '',
           children: [...s.children, newChild],
           devices: [
             ...s.devices.filter(d => d.id !== newDevice.id),
@@ -554,7 +519,7 @@ export const useAppStore = create<AppState>()(
                 : mappedDevices[0]?.id || '';
             if (nextSelected !== s.selectedDeviceId) deviceGeneration++;
             return {
-              ...(nextSelected !== s.selectedDeviceId ? { messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' } : {}),
+              ...(nextSelected !== s.selectedDeviceId ? { messages: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '' } : {}),
               devices: mappedDevices,
               selectedDeviceId: nextSelected,
             };
@@ -562,6 +527,16 @@ export const useAppStore = create<AppState>()(
         } catch {
           // 忽略网络瞬断
         }
+      },
+
+      renameDevice: async (deviceId, alias) => {
+        const response = await fetch('/api/v1/device/status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'rename', deviceId, alias }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || '修改名称失败，请重试');
+        set(s => ({ devices: s.devices.map(d => d.id === deviceId ? { ...d, alias: data.device.alias } : d) }));
       },
 
       removeDevice: async deviceId => {
@@ -574,7 +549,7 @@ export const useAppStore = create<AppState>()(
           const remaining = s.devices.filter(d => d.id !== deviceId);
           return {
             devices: remaining,
-            ...(s.selectedDeviceId === deviceId ? { messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' } : {}),
+            ...(s.selectedDeviceId === deviceId ? { messages: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '' } : {}),
             selectedDeviceId:
               s.selectedDeviceId === deviceId ? remaining[0]?.id || '' : s.selectedDeviceId,
           };
@@ -584,7 +559,7 @@ export const useAppStore = create<AppState>()(
       selectDevice: deviceId => {
         if (get().selectedDeviceId === deviceId || !get().devices.some(d => d.id === deviceId)) return;
         deviceGeneration++;
-        set({ selectedDeviceId: deviceId, messages: [], schedules: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '', schedulesDeviceId: '' });
+        set({ selectedDeviceId: deviceId, messages: [], aiLogs: [], petConfig: INITIAL_PET_CONFIG, configDeviceId: '', messagesDeviceId: '' });
       },
     }),
     {

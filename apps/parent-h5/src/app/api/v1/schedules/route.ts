@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
     const schedule = await upsertVoiceSchedule({
       id: body.id ? String(body.id) : undefined,
       deviceId: body.deviceId ? String(body.deviceId) : 'default',
+      groupId: body.groupId ? String(body.groupId) : undefined,
       title,
       cronExpr: String(body.cronExpr || '30 7 * * 1,2,3,4,5'),
       timeStr,

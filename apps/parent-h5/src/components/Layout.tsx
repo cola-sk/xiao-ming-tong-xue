@@ -12,7 +12,7 @@ import { DeviceSettingsPage } from '../views/DeviceSettings';
 
 export const Layout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('wechat');
-  const { devices, selectedDeviceId, selectDevice, unreadCounts, schedules, parentRole, setParentRole, syncDevicesFromServer, syncUnreadCounts, syncMessagesFromServer, syncSchedulesFromServer, syncPetAiFromServer } = useAppStore();
+  const { devices, selectedDeviceId, selectDevice, unreadCounts, parentRole, setParentRole, syncDevicesFromServer, syncUnreadCounts, syncMessagesFromServer, syncSchedulesFromServer, syncPetAiFromServer } = useAppStore();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const currentDevice = devices.find(d => d.id === selectedDeviceId);
   useEffect(() => {
@@ -25,7 +25,7 @@ export const Layout: React.FC = () => {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
   }, [syncDevicesFromServer, syncUnreadCounts]);
   useEffect(() => {
-    if (selectedDeviceId) { void syncMessagesFromServer(); void syncSchedulesFromServer(); void syncPetAiFromServer(); }
+    if (selectedDeviceId) { void syncMessagesFromServer(); void syncPetAiFromServer(); }
   }, [selectedDeviceId, syncMessagesFromServer, syncSchedulesFromServer, syncPetAiFromServer]);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
 
@@ -44,7 +44,6 @@ export const Layout: React.FC = () => {
 
   const unreadChildVoiceCount = devices.reduce((sum, device) => sum + (unreadCounts[device.id] || 0), 0);
 
-  const activeSchedulesCount = schedules.filter(s => s.enabled).length;
 
   const tabs = [
     {
@@ -57,7 +56,6 @@ export const Layout: React.FC = () => {
       key: 'schedules',
       title: '定时播报',
       icon: <IconClock className="w-[18px] h-[18px]" />,
-      badge: activeSchedulesCount > 0 ? activeSchedulesCount : undefined,
     },
     {
       key: 'pet-ai',
@@ -94,7 +92,7 @@ export const Layout: React.FC = () => {
         </div>
       </header>
 
-      {(activeTab === 'wechat' || activeTab === 'schedules' || activeTab === 'pet-ai') && (
+      {(activeTab === 'wechat') && (
         <div className="w-full max-w-xl mx-auto px-4 py-2 shrink-0">
           <button type="button" onClick={() => setSwitcherOpen(true)} className="w-full rounded-xl bg-white px-3 py-2 text-left text-sm flex items-center justify-between border border-[#E9E7E0]">
             <span className="truncate">当前设备：{currentDevice?.alias || '请先配对设备'} {currentDevice && (currentDevice.isOnline ? '· 在线' : '· 离线')}</span>
@@ -116,12 +114,12 @@ export const Layout: React.FC = () => {
         {activeTab === 'wechat' && <WeChatVoicePage key={selectedDeviceId} />}
         {activeTab === 'schedules' && (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <VoiceSchedulesPage key={selectedDeviceId} />
+            <VoiceSchedulesPage />
           </div>
         )}
         {activeTab === 'pet-ai' && (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <PetAIConfigPage key={selectedDeviceId} />
+            <PetAIConfigPage onSelectDevice={() => setSwitcherOpen(true)} />
           </div>
         )}
         {activeTab === 'devices' && (
