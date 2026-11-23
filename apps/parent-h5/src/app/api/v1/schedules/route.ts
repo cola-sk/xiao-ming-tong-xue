@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
       audioUrl: body.audioUrl ? String(body.audioUrl) : null,
       audioMd5: body.audioMd5 ? String(body.audioMd5) : null,
       repeatPlayCount: Math.max(1, Math.min(20, Number(body.repeatPlayCount ?? 2))),
+      loudnessRate: Number.isInteger(body.loudnessRate) && body.loudnessRate >= -50 && body.loudnessRate <= 100 ? body.loudnessRate : 0,
       requireAck: Boolean(body.requireAck),
     });
 

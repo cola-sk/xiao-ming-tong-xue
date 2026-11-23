@@ -72,7 +72,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setTextContent(initialSchedule.textContent);
       setRepeatPlayCount(initialSchedule.repeatPlayCount);
       setRequireAck(Boolean(initialSchedule.requireAck));
-      setLoudnessRate(0);
+      setLoudnessRate(Number(initialSchedule.loudnessRate ?? 0));
     } else {
       setTitle('');
       setTimeStr('07:30');
@@ -84,6 +84,21 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setRequireAck(false);
       setLoudnessRate(0);
     }
+    if (initialSchedule && initialSchedule.loudnessRate !== undefined) return;
+    let cancelled = false;
+    void fetch('/api/v1/voice-settings', { cache: 'no-store' })
+      .then(async res => {
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const v = Number(data.loudnessRate);
+        if (!cancelled && Number.isInteger(v) && v >= -50 && v <= 100) {
+          setLoudnessRate(v);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [initialSchedule, visible]);
 
   const toggleDay = (day: number) => {
@@ -159,6 +174,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           lastAckStatus: 'idle',
           lastAckAt: null,
           repeatPlayCount,
+          loudnessRate,
           requireAck,
         });
         Toast.show({
@@ -210,6 +226,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           textContent: textContent.trim(),
           audioUrl,
           audioMd5,
+          loudnessRate,
         });
         Toast.show({
           icon: 'success',
@@ -234,6 +251,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           audioUrl,
           audioMd5,
           repeatPlayCount,
+          loudnessRate,
           requireAck,
         }, targetDeviceIds, groupIdRef.current);
         Toast.show({
@@ -447,11 +465,13 @@ export const ScheduleFormModal: React.FC<Props> = ({
               </div>
             )}
 
+            {(mode === 'create' || mode === 'voice') && (sourceType === 'tts' || sourceType === 'parent_clone') && (
             <div className="rounded-xl bg-[#FFF8F2] border border-[#F3D8C2] p-2.5 space-y-1.5">
               <div className="flex items-center justify-between"><span className="text-xs font-bold text-[#242620]">本次合成音量</span><span className="font-mono text-xs font-bold text-[#E85835]">{loudnessRate > 0 ? `+${loudnessRate}` : loudnessRate}（{(1 + loudnessRate / 100).toFixed(1)}倍）</span></div>
               <input type="range" min={-50} max={100} step={10} value={loudnessRate} onChange={e => setLoudnessRate(Number(e.target.value))} className="w-full accent-[#E85835]" />
               <div className="flex justify-between text-[10px] text-[#9CA3AF]"><span>0.5倍</span><span>默认1倍</span><span>2倍</span></div>
             </div>
+            )}
 
             <div className="space-y-2">
               <label className="text-caption text-[#1F2937] block">

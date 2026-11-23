@@ -123,6 +123,10 @@ export async function ensureNeonSchema(): Promise<void> {
         ALTER TABLE voice_schedules
         ADD COLUMN IF NOT EXISTS require_ack BOOLEAN NOT NULL DEFAULT FALSE
       `;
+      await sql`
+        ALTER TABLE voice_schedules
+        ADD COLUMN IF NOT EXISTS loudness_rate INTEGER NOT NULL DEFAULT 0
+      `;
 
       await sql`ALTER TABLE voice_schedules ADD COLUMN IF NOT EXISTS group_id TEXT`;
 
