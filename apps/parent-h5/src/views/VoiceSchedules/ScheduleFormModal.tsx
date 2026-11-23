@@ -53,6 +53,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
   const [selectedCloneId, setSelectedCloneId] = useState<string>('');
   const [textContent, setTextContent] = useState('宝贝，八点半啦，快去刷牙洗脸准备睡觉吧！');
   const [repeatPlayCount, setRepeatPlayCount] = useState(2);
+  const [loudnessRate, setLoudnessRate] = useState(0);
   const [requireAck, setRequireAck] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -71,6 +72,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setTextContent(initialSchedule.textContent);
       setRepeatPlayCount(initialSchedule.repeatPlayCount);
       setRequireAck(Boolean(initialSchedule.requireAck));
+      setLoudnessRate(0);
     } else {
       setTitle('');
       setTimeStr('07:30');
@@ -80,6 +82,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
       setTextContent('宝贝快起床啦，太阳晒屁股喽！');
       setRepeatPlayCount(2);
       setRequireAck(false);
+      setLoudnessRate(0);
     }
   }, [initialSchedule, visible]);
 
@@ -108,6 +111,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
         text: textContent.trim(),
         voiceType,
         isClonedVoice: isCloned,
+        loudnessRate,
       });
       if (res.ok && res.audioDataUrl) {
         Toast.show({ icon: 'success', content: '豆包 TTS 合成成功，正在播放真实音频' });
@@ -175,6 +179,7 @@ export const ScheduleFormModal: React.FC<Props> = ({
           text: textContent.trim(),
           voiceType,
           isClonedVoice: isCloned,
+          loudnessRate,
           persist: true, // 定时语音任务开启持久化，生成 /api/v1/audio/{md5}.mp3 永久地址
         });
         if (ttsResult.ok && ttsResult.audioUrl && ttsResult.audioMd5) {
@@ -441,6 +446,12 @@ export const ScheduleFormModal: React.FC<Props> = ({
                 )}
               </div>
             )}
+
+            <div className="rounded-xl bg-[#FFF8F2] border border-[#F3D8C2] p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between"><span className="text-xs font-bold text-[#242620]">本次合成音量</span><span className="font-mono text-xs font-bold text-[#E85835]">{loudnessRate > 0 ? `+${loudnessRate}` : loudnessRate}（{(1 + loudnessRate / 100).toFixed(1)}倍）</span></div>
+              <input type="range" min={-50} max={100} step={10} value={loudnessRate} onChange={e => setLoudnessRate(Number(e.target.value))} className="w-full accent-[#E85835]" />
+              <div className="flex justify-between text-[10px] text-[#9CA3AF]"><span>0.5倍</span><span>默认1倍</span><span>2倍</span></div>
+            </div>
 
             <div className="space-y-2">
               <label className="text-caption text-[#1F2937] block">

@@ -78,6 +78,10 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
 
+      await sql`CREATE TABLE IF NOT EXISTS family_voice_settings (
+        id TEXT PRIMARY KEY, loudness_rate INTEGER NOT NULL DEFAULT 0
+      )`;
+
       // 5. 爸妈声音克隆档案表 (voice_clone_profiles)
       await sql`
         CREATE TABLE IF NOT EXISTS voice_clone_profiles (

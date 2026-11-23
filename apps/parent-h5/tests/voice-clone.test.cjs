@@ -12,6 +12,7 @@ function load(file, mocks, extra = {}) {
   const exports = {};
   const context = { exports, module: { exports }, require: name => {
     if (name in mocks) return mocks[name];
+    if (name === './voiceSettings') return { getVoiceLoudnessRate: async () => 0, setVoiceLoudnessRate: async () => {} };
     return require(name);
   }, process, Buffer, AbortSignal, console, Error, ...extra };
   vm.runInNewContext(code, context, { filename: file });

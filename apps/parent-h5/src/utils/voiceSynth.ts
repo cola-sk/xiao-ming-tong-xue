@@ -34,6 +34,8 @@ export async function requestDoubaoTtsAudio(params: {
   text: string;
   voiceType?: string;
   isClonedVoice?: boolean;
+  /** 豆包合成音量：-50=0.5倍，0=1倍，100=2倍；不传则使用家庭默认值 */
+  loudnessRate?: number;
   /** 仅「定时语音任务」传 true 保存到数据库生成永久地址；试听、AI回答与聊天均传 false（默认） */
   persist?: boolean;
 }): Promise<{

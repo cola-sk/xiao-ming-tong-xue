@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
   const voiceType: string = (body.voiceType || '').trim();
   const isClonedVoice: boolean = Boolean(body.isClonedVoice);
   const speedRatio: number = Number(body.speedRatio) || 1.0;
+  const loudnessRate = Number.isInteger(body.loudnessRate) && body.loudnessRate >= -50 && body.loudnessRate <= 100 ? body.loudnessRate : undefined;
   // 只有定时语音任务才传 persist: true 保存到数据库；其他试听或对话均不落库
   const persist: boolean = !access.deviceId && Boolean(body.persist);
 
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
       voiceType: voiceType || undefined,
       isClonedVoice,
       speedRatio,
+      loudnessRate,
       persist,
     });
 

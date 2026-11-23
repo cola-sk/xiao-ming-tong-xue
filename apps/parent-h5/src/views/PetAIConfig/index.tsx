@@ -25,6 +25,8 @@ export const PetAIConfigPage: React.FC<{ onSelectDevice: () => void }> = ({ onSe
   const [selectedVoiceId, setSelectedVoiceId] = useState(petConfig.voiceId);
   const [customPrompt, setCustomPrompt] = useState(petConfig.customPrompt);
   const [previewingId, setPreviewingId] = useState<string>('');
+  const [loudnessRate, setLoudnessRate] = useState(0);
+  const [savingLoudness, setSavingLoudness] = useState(false);
   const [cloneModalVisible, setCloneModalVisible] = useState(false);
   const [cloneModalMode, setCloneModalMode] = useState<'create' | 'retrain'>('create');
   const [editingVoice, setEditingVoice] = useState<VoiceCloneProfile | null>(null);
@@ -59,6 +61,7 @@ export const PetAIConfigPage: React.FC<{ onSelectDevice: () => void }> = ({ onSe
   };
 
   useEffect(() => {
+    void fetch('/api/v1/voice-settings', { cache: 'no-store' }).then(async response => { if (response.ok) { const data = await response.json(); setLoudnessRate(Number(data.loudnessRate) || 0); } }).catch(() => {});
     void syncPetAiFromServer();
     void syncVoiceClonesFromServer();
   }, [syncPetAiFromServer, syncVoiceClonesFromServer]);
@@ -133,6 +136,14 @@ export const PetAIConfigPage: React.FC<{ onSelectDevice: () => void }> = ({ onSe
             <p className="text-caption text-[#77786F] mt-1">
               录制爸爸/妈妈声音样本，用于定时语音播报与专属声音合成。
             </p>
+            <div className="mt-3 rounded-xl bg-white/75 border border-[#E8D9C8] p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div><div className="text-xs font-bold text-[#242620]">豆包合成音量</div><p className="text-[11px] text-[#77786F]">影响之后新合成的试听、AI 回复和定时播报。已保存音频需重新合成。</p></div>
+                <span className="font-mono text-xs font-bold text-[#E85835]">{loudnessRate > 0 ? `+${loudnessRate}` : loudnessRate}</span>
+              </div>
+              <input type="range" min={-50} max={100} step={10} value={loudnessRate} disabled={savingLoudness} onChange={e => setLoudnessRate(Number(e.target.value))} onMouseUp={async e => { const value = Number((e.target as HTMLInputElement).value); setSavingLoudness(true); try { const res = await fetch('/api/v1/voice-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loudnessRate: value }) }); if (!res.ok) throw new Error(); Toast.show({ content: '合成音量已保存' }); } catch { Toast.show({ content: '保存合成音量失败，请重试' }); } finally { setSavingLoudness(false); } }} onTouchEnd={async e => { const value = Number((e.target as HTMLInputElement).value); setSavingLoudness(true); try { const res = await fetch('/api/v1/voice-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loudnessRate: value }) }); if (!res.ok) throw new Error(); Toast.show({ content: '合成音量已保存' }); } catch { Toast.show({ content: '保存合成音量失败，请重试' }); } finally { setSavingLoudness(false); } }} className="w-full accent-[#E85835] mt-2" />
+              <div className="flex justify-between text-[10px] text-[#9CA3AF]"><span>0.5 倍</span><span>默认</span><span>2 倍</span></div>
+            </div>
           </div>
           <button
             type="button"

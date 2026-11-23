@@ -1,6 +1,7 @@
 import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { findExistingAudioByText, saveSynthesizedAudio } from './audioStore';
+import { getVoiceLoudnessRate } from './voiceSettings';
 
 const VOLC_SPEECH_HOST = 'https://openspeech.bytedance.com';
 
@@ -85,6 +86,7 @@ async function synthesizeViaV3Unidirectional(params: {
   text: string;
   speaker: string;
   speedRatio?: number;
+  loudnessRate: number;
   timeoutMs?: number;
 }): Promise<{ audioBuffer: Buffer; resourceId: string }> {
   const response = await fetch(`${VOLC_SPEECH_HOST}/api/v3/tts/unidirectional`, {
@@ -104,6 +106,7 @@ async function synthesizeViaV3Unidirectional(params: {
         audio_params: {
           format: 'mp3',
           sample_rate: 24000,
+          loudness_rate: params.loudnessRate,
           speech_rate: Math.round(((params.speedRatio ?? 1.0) - 1.0) * 100),
         },
       },
@@ -156,6 +159,7 @@ export async function synthesizeDoubaoTts(params: {
   isClonedVoice?: boolean;
   speedRatio?: number;
   persist?: boolean;
+  loudnessRate?: number;
   timeoutMs?: number;
 }) {
   const cfg = getDoubaoConfig();
@@ -165,11 +169,15 @@ export async function synthesizeDoubaoTts(params: {
 
   const speaker = params.voiceType || cfg.defaultPetVoiceType;
   const shouldPersist = Boolean(params.persist);
+  const loudnessRate = params.loudnessRate !== undefined ? params.loudnessRate : await getVoiceLoudnessRate();
+  const speed = params.speedRatio ?? 1;
+  // Old cache entries have the default volume and speed. New variants need distinct keys.
+  const cacheVoiceType = loudnessRate === 0 && speed === 1 ? speaker : `${speaker}|loudness=${loudnessRate}|speed=${speed}`;
 
   // 1) 仅当开启持久化 (persist = true，即定时语音任务) 时，才查询数据库是否已有缓存音频
   // Retraining can change a clone without changing its speaker ID.
   if (shouldPersist && !speaker.startsWith('S_')) {
-    const existing = await findExistingAudioByText(speaker, params.text);
+    const existing = await findExistingAudioByText(cacheVoiceType, params.text);
     if (existing) {
       return {
         audioUrl: `/api/v1/audio/${existing.md5}.mp3`,
@@ -217,6 +225,7 @@ export async function synthesizeDoubaoTts(params: {
         text: params.text,
         speaker,
         speedRatio: params.speedRatio,
+        loudnessRate,
         timeoutMs: Math.max(1, Math.min(params.timeoutMs || 30000, deadline - Date.now())),
       });
       const audioBase64 = audioBuffer.toString('base64');
@@ -226,7 +235,7 @@ export async function synthesizeDoubaoTts(params: {
       if (shouldPersist) {
         await saveSynthesizedAudio({
           md5: audioMd5,
-          voiceType: speaker,
+          voiceType: cacheVoiceType,
           textContent: params.text,
           audioBase64,
         });

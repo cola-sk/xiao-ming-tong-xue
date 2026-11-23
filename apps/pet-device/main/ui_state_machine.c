@@ -264,6 +264,8 @@ static lv_obj_t *make_pill_btn(lv_obj_t *parent, int32_t w, int32_t h, int32_t r
     lv_obj_set_style_radius(btn, radius, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(bg_hex), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn, lv_color_hex(fg_hex), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
@@ -272,7 +274,8 @@ static lv_obj_t *make_pill_btn(lv_obj_t *parent, int32_t w, int32_t h, int32_t r
     if (text) {
         lv_obj_t *lbl = lv_label_create(btn);
         lv_obj_set_style_text_font(lbl, &pet_font, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(fg_hex), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(fg_hex), LV_PART_MAIN);
+        lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, LV_PART_MAIN);
         lv_label_set_text(lbl, text);
         lv_obj_center(lbl);
     }
