@@ -421,9 +421,11 @@ static esp_err_t post_audio_request(const char *endpoint, cJSON *body) {
             }
             atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
             atomic_fetch_add(&s_chat_version, 1);
+            ui_wake_screen();
             ui_set_voice_status("正在播放语音");
             err = audio_engine_play_buffer_gen((uint8_t *)ctx.buf, ctx.len, expected_gen);
         } else {
+            ui_wake_screen();
             ui_set_voice_status("正在播放语音");
             err = audio_engine_play_buffer((uint8_t *)ctx.buf, ctx.len);
         }
@@ -756,6 +758,7 @@ esp_err_t chat_client_play_message(const char *msg_id) {
     if (local_ok) {
         atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
         atomic_fetch_add(&s_chat_version, 1);
+        ui_wake_screen();
         ui_set_voice_status("正在播放语音");
         err = audio_engine_play_file_gen(path, start_gen);
     } else if (target.audio_url[0]) {
@@ -769,6 +772,7 @@ esp_err_t chat_client_play_message(const char *msg_id) {
             if (start_gen == audio_engine_get_stop_generation()) {
                 atomic_store(&s_play_phase, CHAT_PLAY_PLAYING);
                 atomic_fetch_add(&s_chat_version, 1);
+                ui_wake_screen();
                 ui_set_voice_status("正在播放语音");
                 err = audio_engine_play_buffer_gen(buf, buf_len, start_gen);
             } else {

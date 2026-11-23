@@ -38,6 +38,7 @@ void ui_set_voice_status(const char *status);
 void ui_set_pairing_status(const char *code, const char *status);
 
 void ui_hide_alarm_modal(void);
+void ui_wake_screen(void);
 void ui_set_key_hold_state(int target, bool holding);
 
 // Returns -1 when the PMU battery reading is unavailable.

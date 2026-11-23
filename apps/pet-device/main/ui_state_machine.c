@@ -1461,6 +1461,7 @@ static void build_alarm_overlay(lv_obj_t *screen) {
     lv_obj_t *ack = make_pill_btn(card, 240, 58, 29, COL_ALARM, 0xFFFFFF,
                                   "知道了 · 停止", LV_EVENT_PRESSED, alarm_ack_event, NULL);
     lv_obj_align(ack, LV_ALIGN_BOTTOM_MID, 0, -24);
+    lv_obj_add_event_cb(s_alarm_panel, alarm_ack_event, LV_EVENT_CLICKED, NULL);
     lv_obj_set_hidden(s_alarm_panel, true);
 }
 
@@ -1686,12 +1687,22 @@ void ui_on_touch_press_end(void) {
     if (s_touch_started) audio_engine_end_hold(s_touch_target);
     s_touch_started = false;
 }
-void ui_on_side_boot_key_hold_start(void) { audio_engine_start_hold(AUDIO_TARGET_AI); }
+void ui_on_side_boot_key_hold_start(void) {
+    ui_wake_screen();
+    audio_engine_start_hold(AUDIO_TARGET_AI);
+}
 void ui_on_side_boot_key_hold_end(void) { audio_engine_end_hold(AUDIO_TARGET_AI); }
+
+void ui_wake_screen(void) {
+    if (!s_home_view || esp_lv_adapter_lock(1000) != ESP_OK) return;
+    screen_wake(false);
+    esp_lv_adapter_unlock();
+}
 
 void ui_trigger_alarm_modal(const char *id, const char *title, const char *path) {
     (void)path;
-    if (!s_alarm_panel || esp_lv_adapter_lock(1000) != ESP_OK) return;
+    if (!s_alarm_panel || esp_lv_adapter_lock(-1) != ESP_OK) return;
+    ESP_LOGI(TAG, "Triggering alarm modal id=%s display_off=%d", id ? id : "", s_display_off);
     screen_wake(false);
     s_alarm_active = true;
     snprintf(s_alarm_id, sizeof(s_alarm_id), "%s", id ? id : "");

@@ -202,7 +202,9 @@ esp_err_t rtc_scheduler_fetch_and_sync(void) {
     free(r.buf); return err;
 }
 void rtc_scheduler_ack_active(void) {
-    if (atomic_load(&s_alarm_active)) { atomic_store(&s_alarm_ack, true); audio_engine_stop_playback(); }
+    if (atomic_load(&s_alarm_active) && !atomic_exchange(&s_alarm_ack, true)) {
+        audio_engine_stop_playback();
+    }
 }
 static void save_ack(const char *id) {
     nvs_handle_t h; if (nvs_open("pet_alarms", NVS_READWRITE, &h) != ESP_OK) return;
@@ -272,6 +274,9 @@ static void rtc_monitor_task(void *arg) {
                     }
                 }
                 bool acked = atomic_exchange(&s_alarm_ack, false);
+                atomic_store(&s_alarm_active, false);
+                ui_hide_alarm_modal();
+                atomic_fetch_add(&s_version, 1);
                 if (acked || (played && s->repeat_mask == 0)) {
                     if (!wifi_manager_is_connected() || device_sync_send_alarm_ack(s_active.id) != ESP_OK) {
                         save_ack(s_active.id);
@@ -288,9 +293,6 @@ static void rtc_monitor_task(void *arg) {
                     }
                     ESP_LOGI(TAG, "Alarm finished id=%s acked=%d", s->id, acked);
                 }
-                atomic_store(&s_alarm_active, false);
-                ui_hide_alarm_modal();
-                atomic_fetch_add(&s_version, 1);
                 break;
             }
         }
